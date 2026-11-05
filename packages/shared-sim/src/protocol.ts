@@ -115,6 +115,151 @@ export interface ChatMessageDto {
   readonly text: string;
 }
 
+export type VehicleRole = "commuter" | "freight" | "bus" | "metro";
+
+/** One visible vehicle sampled from the real flows; the client animates it along `path` at 60 FPS. */
+export interface VehicleAgentDto {
+  readonly id: string;
+  readonly vehicleTypeId: string;
+  readonly role: VehicleRole;
+  readonly sectorId: SectorId;
+  readonly layer: "surface" | "underground";
+  /** Flat polyline `[x0, y0, x1, y1, ...]` in tile coordinates; vehicles shuttle back and forth. */
+  readonly path: readonly number[];
+  readonly pathLengthTiles: number;
+  readonly speedTilesPerSec: number;
+  readonly phase: number;
+  readonly colorHex: number;
+}
+
+export type RoadConditionStageDto = "good" | "potholes" | "emergency";
+
+export interface SegmentTrafficDto {
+  readonly segmentId: string;
+  readonly vehiclesPerHour: number;
+  readonly heavyVehiclesPerHour: number;
+  readonly esalPerHour: number;
+  readonly volumeCapacityRatio: number;
+  readonly speedFactor: number;
+  readonly wearPercentPerHour: number;
+  readonly stage: RoadConditionStageDto;
+}
+
+export interface SectorTransportStatsDto {
+  readonly sectorId: SectorId;
+  readonly carTripsPerHour: number;
+  readonly truckTripsPerHour: number;
+  readonly transitRidersPerHour: number;
+  readonly busRoutes: number;
+  readonly busCoverageShare: number;
+  readonly metroStations: number;
+  readonly metroOperational: boolean;
+  readonly metroCoverageShare: number;
+  readonly metroLandValueBoostShare: number;
+  readonly avgRoadHealth: number;
+  readonly congestedSegments: number;
+  readonly damagedSegments: number;
+  readonly roadServiceLevel: 0 | 1 | 2;
+  readonly roadServiceMonthlyCostMinor: string;
+}
+
+export interface BusRouteDto {
+  readonly id: string;
+  readonly sectorId: SectorId;
+  readonly name: string;
+  readonly operatorName: string;
+  readonly stopBuildingIds: readonly string[];
+  readonly fleetSize: number;
+  readonly vehicleTypeId: string;
+  readonly licenseFeeMonthlyMinor: string;
+}
+
+export interface BusRouteStatusDto {
+  readonly routeId: string;
+  readonly operating: boolean;
+  readonly statusRu: string;
+  readonly lengthTiles: number;
+  readonly busesPerHour: number;
+  readonly path: readonly number[];
+}
+
+export interface TrafficStateDto {
+  readonly version: number;
+  readonly gameHourOfDay: number;
+  readonly vehicles: readonly VehicleAgentDto[];
+  readonly segments: readonly SegmentTrafficDto[];
+  readonly sectors: readonly SectorTransportStatsDto[];
+  readonly busRoutes: readonly BusRouteStatusDto[];
+}
+
+export interface VehicleInspectorDto {
+  readonly id: string;
+  readonly vehicleTypeId: string;
+  readonly typeNameRu: string;
+  readonly role: VehicleRole;
+  readonly sectorId: SectorId;
+  readonly plate: string;
+  readonly liveryColorHex: number;
+  readonly ownerLabel: string;
+  readonly originLabel: string;
+  readonly waypointLabel: string;
+  readonly destinationLabel: string;
+  readonly cargo: {
+    readonly commodity: string;
+    readonly payload: number;
+    readonly capacity: number;
+    readonly unit: string;
+    readonly valueMinor: string;
+    readonly dutyPaidMinor: string;
+    readonly dutyLabel: string;
+  } | null;
+  readonly passengers: { readonly onboard: number; readonly capacity: number } | null;
+  readonly currencySymbol: string;
+  readonly speedKmh: number;
+  readonly speedLimitKmh: number;
+  readonly avgRoadHealth: number;
+  readonly roadWearFactor: number;
+  readonly roadWearPerPassPercent: number;
+  readonly driverCitizenId: string;
+  readonly shiftHoursRemaining: number;
+}
+
+export interface DossierLineDto {
+  readonly label: string;
+  readonly amountMinor: string;
+}
+
+export interface CitizenThoughtDto {
+  readonly text: string;
+  readonly delta: number;
+}
+
+export interface CitizenDossierDto {
+  readonly id: string;
+  readonly fullName: string;
+  readonly age: number;
+  readonly classId: "workers" | "engineers" | "elite" | "retirees";
+  readonly classNameRu: string;
+  readonly statusRu: string;
+  readonly familyRu: string;
+  readonly sectorId: SectorId;
+  readonly home: { readonly label: string; readonly tileX: number; readonly tileY: number };
+  readonly workplace: { readonly label: string; readonly roleRu: string; readonly tileX: number; readonly tileY: number };
+  readonly commuteKm: number;
+  readonly commuteModeRu: string;
+  readonly currencySymbol: string;
+  readonly income: readonly DossierLineDto[];
+  readonly expenses: readonly DossierLineDto[];
+  readonly totalIncomeMinor: string;
+  readonly totalExpensesMinor: string;
+  readonly netSavingsMinor: string;
+  readonly savingsRate: number;
+  readonly cumulativeReserveMinor: string;
+  readonly satisfaction: number;
+  readonly thoughts: readonly CitizenThoughtDto[];
+  readonly vehicleId: string | null;
+}
+
 export interface WorldSnapshotDto {
   readonly worldId: string;
   readonly seasonDay: number;
@@ -126,6 +271,9 @@ export interface WorldSnapshotDto {
   readonly zones: readonly ZoneDto[];
   readonly emergencies: readonly ActiveEmergencyDto[];
   readonly recentChat: readonly ChatMessageDto[];
+  readonly trafficVersion: number;
+  readonly busRoutes: readonly BusRouteDto[];
+  readonly transport: readonly SectorTransportStatsDto[];
 }
 
 export type ClientCommand =
@@ -198,6 +346,25 @@ export type ClientCommand =
       importDutyRate?: number;
       cityNewPlantShare?: number;
       toggleDecreeId?: string;
+      roadServiceLevel?: 0 | 1 | 2;
+    }
+  | {
+      type: "create_bus_route";
+      sectorId: SectorId;
+      stopBuildingIds: string[];
+      fleetSize?: number;
+      name?: string;
+    }
+  | {
+      type: "delete_bus_route";
+      sectorId: SectorId;
+      routeId: string;
+    }
+  | {
+      type: "repair_road";
+      sectorId: SectorId;
+      /** Omit to resurface every damaged road of the sector. */
+      segmentId?: string;
     }
   | {
       type: "send_chat";
@@ -218,4 +385,5 @@ export type ClientCommand =
 export type ServerMessage =
   | { type: "world_snapshot"; snapshot: WorldSnapshotDto }
   | { type: "command_result"; ok: boolean; message: string }
-  | { type: "notice_alert"; message: string };
+  | { type: "notice_alert"; message: string }
+  | { type: "traffic_state"; traffic: TrafficStateDto };

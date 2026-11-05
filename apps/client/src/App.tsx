@@ -12,6 +12,7 @@ import {
   type ResourceDepositSite,
   type SectorId,
   type ServerMessage,
+  type TrafficStateDto,
   type WorldSnapshotDto,
 } from "@pentapolis/shared-sim";
 import {
@@ -25,6 +26,8 @@ import { BuildToolbar } from "./components/BuildToolbar.tsx";
 import { MacroDashboardModal } from "./components/MacroDashboardModal.tsx";
 import { CouncilChatDrawer } from "./components/CouncilChatDrawer.tsx";
 import { AdminGodModeTray } from "./components/AdminGodModeTray.tsx";
+import { TransportPanel } from "./components/TransportPanel.tsx";
+import { AgentInspectorPanel } from "./components/AgentInspectorPanel.tsx";
 
 interface MapMetaResponse {
   readonly width: number;
@@ -57,6 +60,11 @@ export const App: React.FC = () => {
   const [showChatDrawer, setShowChatDrawer] = useState(false);
   const [showAdminTray, setShowAdminTray] = useState(false);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const [traffic, setTraffic] = useState<TrafficStateDto | null>(null);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [followingVehicle, setFollowingVehicle] = useState(false);
+  const [showTransport, setShowTransport] = useState(false);
+  const [undergroundView, setUndergroundView] = useState(false);
 
   const activeSectorRef = useRef<SectorId>(activeSectorId);
   activeSectorRef.current = activeSectorId;
@@ -140,16 +148,37 @@ export const App: React.FC = () => {
           orientationDeg,
         });
       },
+      onSelectVehicle: (vehicleId) => {
+        setSelectedVehicleId(vehicleId);
+        setFollowingVehicle(false);
+        if (vehicleId) setSelectedBuildingId(null);
+      },
+      onToggleBusStop: (buildingId) => {
+        setTool((prev) =>
+          prev.mode === "bus_route"
+            ? {
+                mode: "bus_route",
+                stopIds: prev.stopIds.includes(buildingId)
+                  ? prev.stopIds.filter((id) => id !== buildingId)
+                  : [...prev.stopIds, buildingId],
+              }
+            : prev
+        );
+      },
+      onRepairSegment: (segmentId) => {
+        void sendCommand({ type: "repair_road", sectorId: activeSectorRef.current, segmentId });
+      },
     });
     sceneRef.current = scene;
 
     let cancelled = false;
     void (async () => {
       try {
-        const [metaRes, binRes, snapRes] = await Promise.all([
+        const [metaRes, binRes, snapRes, trafficRes] = await Promise.all([
           fetch("/api/map-meta"),
           fetch("/api/map.bin"),
           fetch("/api/snapshot"),
+          fetch("/api/traffic"),
         ]);
         if (cancelled) return;
         const meta = (await metaRes.json()) as MapMetaResponse;
@@ -162,6 +191,9 @@ export const App: React.FC = () => {
         scene.loadMapTerrain(surface, owner, meta.gateways, meta.deposits);
         scene.applySnapshot(snap);
         setSnapshot(snap);
+        const trafficState = (await trafficRes.json()) as TrafficStateDto;
+        scene.setTrafficState(trafficState);
+        setTraffic(trafficState);
       } catch (err) {
         pushToast(
           false,
@@ -186,6 +218,9 @@ export const App: React.FC = () => {
           pushToast(msg.ok, msg.message);
         } else if (msg.type === "notice_alert") {
           pushToast(true, `⚠️ ${msg.message}`);
+        } else if (msg.type === "traffic_state") {
+          setTraffic(msg.traffic);
+          sceneRef.current?.setTrafficState(msg.traffic);
         }
       } catch {
         // Ignore malformed frame
@@ -205,6 +240,18 @@ export const App: React.FC = () => {
     sceneRef.current?.setTool(tool);
   }, [tool]);
 
+  useEffect(() => {
+    sceneRef.current?.setSelectedVehicle(selectedVehicleId);
+  }, [selectedVehicleId]);
+
+  useEffect(() => {
+    sceneRef.current?.followVehicle(followingVehicle ? selectedVehicleId : null);
+  }, [followingVehicle, selectedVehicleId]);
+
+  useEffect(() => {
+    sceneRef.current?.setUndergroundView(undergroundView);
+  }, [undergroundView]);
+
   // Global hotkey `~` / `Backquote` for God-Mode Admin Tray & `Escape` to return to Inspect
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -219,6 +266,7 @@ export const App: React.FC = () => {
         setShowAdminTray((v) => !v);
       } else if (e.code === "Escape") {
         setTool({ mode: "inspect" });
+        setSelectedVehicleId(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -297,7 +345,57 @@ export const App: React.FC = () => {
             onBulldozeBuilding={(buildingId) =>
               void sendCommand({ type: "bulldoze_building", sectorId: activeSectorId, buildingId })
             }
+            transportOpen={showTransport}
+            onToggleTransport={() => setShowTransport((v) => !v)}
           />
+        </div>
+      )}
+
+      {/* Right Column: Vehicle -> Citizen Inspector & Transport Office (Sprint 5) */}
+      {snapshot && (selectedVehicleId || showTransport) && (
+        <div className="pointer-events-auto fixed right-3 top-14 z-30 w-80 max-h-[calc(100vh-8rem)] overflow-y-auto flex flex-col gap-2">
+          {selectedVehicleId && (
+            <AgentInspectorPanel
+              vehicleId={selectedVehicleId}
+              following={followingVehicle}
+              onClose={() => setSelectedVehicleId(null)}
+              onToggleFollow={() => setFollowingVehicle((v) => !v)}
+              onFocusTile={(x, y) => {
+                setFollowingVehicle(false);
+                setUndergroundView(false);
+                sceneRef.current?.focusTile(x, y, 6);
+              }}
+            />
+          )}
+          {showTransport && (
+            <TransportPanel
+              snapshot={snapshot}
+              traffic={traffic}
+              activeSectorId={activeSectorId}
+              tool={tool}
+              undergroundView={undergroundView}
+              onClose={() => {
+                setShowTransport(false);
+                if (tool.mode === "bus_route" || tool.mode === "repair") setTool({ mode: "inspect" });
+              }}
+              onToggleUnderground={() => setUndergroundView((v) => !v)}
+              onChangeTool={setTool}
+              onCreateRoute={(stopIds, fleetSize, name) =>
+                void sendCommand({
+                  type: "create_bus_route",
+                  sectorId: activeSectorId,
+                  stopBuildingIds: [...stopIds],
+                  fleetSize,
+                  name,
+                })
+              }
+              onDeleteRoute={(routeId) => void sendCommand({ type: "delete_bus_route", sectorId: activeSectorId, routeId })}
+              onSetRoadService={(level) =>
+                void sendCommand({ type: "update_policy", sectorId: activeSectorId, roadServiceLevel: level })
+              }
+              onRepairAll={() => void sendCommand({ type: "repair_road", sectorId: activeSectorId })}
+            />
+          )}
         </div>
       )}
 

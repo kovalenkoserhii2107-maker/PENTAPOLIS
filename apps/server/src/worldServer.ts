@@ -5,40 +5,60 @@
  * - `RegionalMoneyEngine` (5-currency `BigInt` double-entry ledger, 0n error invariants);
  * - `generatePeninsulaMap()` (1000×1000 flat grid + 90°/45° network + river bridges);
  * - `getMasterCatalogs()` (127 buildings, 24 chains, 56 vehicles, 8 decrees, 12 emergencies);
+ * - `computeTraffic()` (Sprint 5: commuter/freight/bus/metro flows, axle-load road wear, agent dossiers);
  * - `WorldDatabase` (`bun:sqlite` in WAL mode).
  */
 import {
+  BUS_LICENSE_FEE_PER_BUS_PER_MONTH_UNITS,
   CANONICAL_EMERGENCIES,
+  GAME_HOURS_PER_MONTH,
+  MIN_ROAD_HEALTH_PERCENT,
+  ROAD_SERVICE_RESTORE_PERCENT_PER_MONTH,
   NATIONAL_CURRENCIES,
   OwnerCode,
   RegionalMoneyEngine,
   SurfaceType,
   absBig,
+  buildCitizenDossier,
+  buildNetworkGraph,
+  buildVehicleInspector,
   computeBuildingAtLevel,
   computeCreditRating,
   computeDualCalendar,
   computeHegemonyScores,
+  computeTraffic,
   formatMoney,
   generatePeninsulaMap,
   getCurrencySpec,
   getMasterCatalogs,
+  isRoadKind,
+  locateRectOnGraph,
   maxBig,
   money,
   mulRate,
+  roadConditionStage,
+  roadRepairCost,
+  roadServiceMonthlyCost,
   toUnits,
   validateAndQuoteNetworkSegment,
   type ActiveEmergencyDto,
   type BuildingDto,
+  type BusRouteDto,
   type ChatMessageDto,
+  type CitizenDossierDto,
   type ClientCommand,
   type CurrencyCode,
   type MasterCatalogs,
   type Money,
   type NetworkSegmentDto,
   type PeninsulaMapData,
+  type RoadServiceLevel,
   type SectorId,
   type SectorSummaryDto,
   type SerializedMatrixRow,
+  type TrafficComputation,
+  type TrafficStateDto,
+  type VehicleInspectorDto,
   type WorldSnapshotDto,
   type ZoneDto,
 } from "@pentapolis/shared-sim";
@@ -51,6 +71,26 @@ export interface CommandOutcome {
 }
 
 const SECTOR_IDS: readonly SectorId[] = [1, 2, 3, 4, 5];
+
+/** Tier 3 tactical tick (GDD §1.4): 20 real seconds = 10 game minutes. */
+export const TACTICAL_TICK_GAME_SECONDS = 600;
+
+const BUS_OPERATORS = ["Горавтотранс", "ЭкспрессЛайн", "Сити-Бас", "Транзит-Плюс", "Полуостров-Авто", "Пятиград-Тур"];
+
+/** Commands after which the traffic flows must be re-routed. */
+const TRAFFIC_AFFECTING_COMMANDS: ReadonlySet<ClientCommand["type"]> = new Set([
+  "reset_sector",
+  "build_segment",
+  "paint_zone",
+  "place_building",
+  "buyout_factory",
+  "upgrade_building",
+  "bulldoze_building",
+  "update_policy",
+  "create_bus_route",
+  "delete_bus_route",
+  "repair_road",
+]);
 
 function fmtSym(amount: Money, symbol: string): string {
   return `${symbol} ${formatMoney(amount)}`;
@@ -89,6 +129,14 @@ export class WorldSimulation {
   private readonly buildings = new Map<string, BuildingDto>();
   private readonly emergencies: ActiveEmergencyDto[] = [];
   private readonly recentChat: ChatMessageDto[] = [];
+  private readonly busRoutes = new Map<string, BusRouteDto>();
+  private readonly roadServiceLevel = new Map<SectorId, RoadServiceLevel>(
+    SECTOR_IDS.map((s) => [s, 1 as RoadServiceLevel])
+  );
+  private traffic: TrafficComputation | null = null;
+  private trafficVersion = 0;
+  private trafficDirty = true;
+  private lastTacticalSlot = 0;
 
   constructor(dbPath = ":memory:") {
     this.catalogs = getMasterCatalogs();
@@ -111,10 +159,11 @@ export class WorldSimulation {
 
     // Run 1 baseline macro step so all 5 regions have initial 7-column matrices (`0n` error),
     // then set every sector's starting Municipal Treasury to $10,000,000 local units (GDD §1.5, §6.1).
+    // The clock starts at 0: hourly/daily steps count from 0, the month-1 baseline is already booked.
     const initialReports = this.engine.stepMonth();
     this.lastMonthProcessed = 1;
-    this.lastDayProcessed = 30;
-    this.lastHourProcessed = 720;
+    this.lastDayProcessed = 0;
+    this.lastHourProcessed = 0;
     this.totalGameSeconds = 0;
     this.db.setMeta("totalGameSeconds", "0");
 
@@ -217,8 +266,26 @@ export class WorldSimulation {
     for (const msg of this.db.loadRecentChat(60)) {
       this.recentChat.push(msg);
     }
+    for (const route of this.db.loadBusRoutes()) {
+      this.busRoutes.set(route.id, route);
+    }
+    for (const sectorId of SECTOR_IDS) {
+      const saved = Number(this.db.getMeta(`roadService:S${sectorId}`) ?? "1");
+      this.roadServiceLevel.set(sectorId, (saved === 0 || saved === 2 ? saved : 1) as RoadServiceLevel);
+    }
+    this.lastTacticalSlot = Math.floor(this.totalGameSeconds / TACTICAL_TICK_GAME_SECONDS);
     this.entitySeq =
-      this.segments.size + this.zones.size + this.buildings.size + this.recentChat.length + 10;
+      this.segments.size +
+      this.zones.size +
+      this.buildings.size +
+      this.recentChat.length +
+      this.busRoutes.size +
+      10;
+    // Restored ids may be sparse after bulldozing; keep new ids clear of every stored one
+    for (const id of [...this.segments.keys(), ...this.zones.keys(), ...this.buildings.keys(), ...this.busRoutes.keys(), ...this.recentChat.map((m) => m.id)]) {
+      const n = Number(id.split("-").pop());
+      if (Number.isFinite(n) && n >= this.entitySeq) this.entitySeq = n + 1;
+    }
   }
 
   private nextId(prefix: string): string {
@@ -255,7 +322,8 @@ export class WorldSimulation {
 
   /**
    * Advances real-time micro-tick (`1s` real = `30s` game time by default) and cascades
-   * hourly (`3,600s`), daily (`86,400s`), and monthly (`2,592,000s`) simulation steps.
+   * tactical (`600s`: traffic re-routing), hourly (`3,600s`: construction, zones, road wear),
+   * daily (`86,400s`), and monthly (`2,592,000s`) simulation steps.
    */
   public advanceGameSeconds(deltaGameSeconds: number): string[] {
     if (deltaGameSeconds <= 0) return [];
@@ -263,11 +331,20 @@ export class WorldSimulation {
     this.totalGameSeconds += deltaGameSeconds;
     this.db.setMeta("totalGameSeconds", String(this.totalGameSeconds));
 
+    const tacticalSlot = Math.floor(this.totalGameSeconds / TACTICAL_TICK_GAME_SECONDS);
+    if (tacticalSlot !== this.lastTacticalSlot) {
+      this.lastTacticalSlot = tacticalSlot;
+      this.trafficDirty = true;
+    }
+
     const totalHoursNow = Math.floor(this.totalGameSeconds / 3600);
     const hoursDelta = totalHoursNow - this.lastHourProcessed;
     if (hoursDelta > 0) {
       this.lastHourProcessed = totalHoursNow;
-      this.stepGameHours(hoursDelta);
+      for (const alert of this.stepGameHours(hoursDelta)) {
+        alerts.push(alert);
+        this.pushSystemChat(alert);
+      }
     }
 
     const totalDaysNow = Math.floor(this.totalGameSeconds / 86_400);
@@ -291,6 +368,13 @@ export class WorldSimulation {
         // Credit monthly positive municipal operating surplus (scaled smoothly for active build phase)
         if (rep.budgetBalance > 0n) {
           reg.treasuryCashAtCb += mulRate(rep.budgetBalance, 0.04);
+        }
+        // Road Service bill and bus licence fees (Sprint 5) for mayor-run sectors
+        if (this.occupiedBySector.get(rep.sectorId)) {
+          reg.treasuryCashAtCb -= this.sectorRoadServiceCost(rep.sectorId);
+          for (const route of this.busRoutes.values()) {
+            if (route.sectorId === rep.sectorId) reg.treasuryCashAtCb += BigInt(route.licenseFeeMonthlyMinor);
+          }
         }
         this.persistSectorState(rep.sectorId);
 
@@ -320,10 +404,12 @@ export class WorldSimulation {
       }
     }
 
+    if (this.trafficDirty) this.recomputeTraffic();
     return alerts;
   }
 
-  private stepGameHours(hours: number): void {
+  private stepGameHours(hours: number): string[] {
+    const alerts: string[] = [];
     // Advance building construction sites (unless stalled awaiting private 90% co-investors)
     for (const b of this.buildings.values()) {
       if (b.stalledAwaitingPrivate || b.constructionProgress >= 1) continue;
@@ -334,6 +420,7 @@ export class WorldSimulation {
         const updated: BuildingDto = { ...b, constructionProgress: Number(nextProg.toFixed(3)) };
         this.buildings.set(b.id, updated);
         this.db.upsertBuilding(updated);
+        if (nextProg >= 1) this.trafficDirty = true;
       }
     }
 
@@ -348,22 +435,129 @@ export class WorldSimulation {
       this.db.upsertZone(updated);
     }
 
-    // Gradual axle road wear (mitigated by TRUCK_WEIGHT_CONTROL decree)
+    // Axle-load road wear from the live traffic flows (GDD §5.2), offset by the Road Service budget
+    const wearBySegment = this.ensureTraffic().segmentWearPerHour;
     for (const seg of this.segments.values()) {
-      if (seg.id.startsWith("GW-STUB-")) continue;
-      const reg = this.engine.getRegion(seg.sectorId);
-      const weightCtrl = reg.levers.activeDecreeIds.includes("TRUCK_WEIGHT_CONTROL") ? 0.75 : 1.0;
-      const wear = hours * 0.04 * weightCtrl;
-      const nextHealth = Math.max(25, Number((seg.healthPercent - wear).toFixed(2)));
-      if (nextHealth !== seg.healthPercent) {
-        const updated: NetworkSegmentDto = { ...seg, healthPercent: nextHealth };
-        this.segments.set(seg.id, updated);
-        this.db.upsertSegment(updated);
+      if (seg.id.startsWith("GW-STUB-") || !isRoadKind(seg.kind)) continue;
+      const wear = wearBySegment.get(seg.id) ?? 0;
+      const level = this.roadServiceLevel.get(seg.sectorId) ?? 1;
+      const restore = ROAD_SERVICE_RESTORE_PERCENT_PER_MONTH[level] / GAME_HOURS_PER_MONTH;
+      const nextHealth = Math.max(
+        MIN_ROAD_HEALTH_PERCENT,
+        Math.min(100, Number((seg.healthPercent + (restore - wear) * hours).toFixed(3)))
+      );
+      if (nextHealth === seg.healthPercent) continue;
+      const before = roadConditionStage(seg.healthPercent);
+      const after = roadConditionStage(nextHealth);
+      if (before !== after && nextHealth < seg.healthPercent) {
+        alerts.push(
+          after === "emergency"
+            ? `🚧 Сектор ${seg.sectorId}: дорога ${seg.id} в аварийном состоянии (${nextHealth.toFixed(0)}%) — скорость −70%, нужен ремонт!`
+            : `🚧 Сектор ${seg.sectorId}: на дороге ${seg.id} появились ямы и колеи (${nextHealth.toFixed(0)}%)`
+        );
       }
+      if (before !== after) this.trafficDirty = true;
+      const updated: NetworkSegmentDto = { ...seg, healthPercent: nextHealth };
+      this.segments.set(seg.id, updated);
+      this.db.upsertSegment(updated);
     }
+    return alerts;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Sprint 5: live traffic, public transport & agent inspector
+  // ---------------------------------------------------------------------------------------------
+
+  private recomputeTraffic(): TrafficComputation {
+    const cal = computeDualCalendar(this.totalGameSeconds, this.catalogs.unitsAndTime.timeBase);
+    this.trafficVersion += 1;
+    this.traffic = computeTraffic({
+      catalogs: this.catalogs,
+      segments: [...this.segments.values()],
+      buildings: [...this.buildings.values()],
+      zones: [...this.zones.values()],
+      busRoutes: [...this.busRoutes.values()],
+      gateways: this.map.gateways,
+      sectors: SECTOR_IDS.map((sectorId) => {
+        const reg = this.engine.getRegion(sectorId);
+        return {
+          sectorId,
+          activeDecreeIds: [...reg.levers.activeDecreeIds],
+          roadServiceLevel: this.roadServiceLevel.get(sectorId) ?? 1,
+          fxRatePerWcu: reg.fxRatePerWcu,
+        };
+      }),
+      gameHourOfDay: cal.economicHourOfDay,
+      version: this.trafficVersion,
+    });
+    this.trafficDirty = false;
+    return this.traffic;
+  }
+
+  private ensureTraffic(): TrafficComputation {
+    return this.traffic && !this.trafficDirty ? this.traffic : this.recomputeTraffic();
+  }
+
+  public getTrafficState(): TrafficStateDto {
+    return this.ensureTraffic().state;
+  }
+
+  private sectorRoadServiceCost(sectorId: SectorId): Money {
+    const level = this.roadServiceLevel.get(sectorId) ?? 1;
+    let wcu = 0n;
+    for (const seg of this.segments.values()) {
+      if (seg.sectorId !== sectorId || seg.id.startsWith("GW-STUB-") || !isRoadKind(seg.kind)) continue;
+      wcu += roadServiceMonthlyCost(seg.kind, Math.hypot(seg.toX - seg.fromX, seg.toY - seg.fromY) * 10, level);
+    }
+    return mulRate(wcu, this.engine.getRegion(sectorId).fxRatePerWcu);
+  }
+
+  private dossierRegionInput(sectorId: SectorId) {
+    const reg = this.engine.getRegion(sectorId);
+    const power = this.computeSectorPower(sectorId);
+    return {
+      classes: reg.classes,
+      cpi: reg.cpi,
+      happinessIndex: reg.happinessIndex,
+      annualInflation:
+        reg.lastReport?.annualInflation ?? (reg.inflationHistory[reg.inflationHistory.length - 1] ?? 0.0025) * 12,
+      keyRate: reg.levers.keyRate,
+      vatRate: reg.levers.vatRate,
+      exportDutyRate: reg.levers.exportDutyRate,
+      fxRatePerWcu: reg.fxRatePerWcu,
+      activeDecreeIds: [...reg.levers.activeDecreeIds],
+      powerDeficit: power.supplyMw < power.demandMw,
+      currencySymbol: currencySymbol(reg.currency),
+    };
+  }
+
+  public inspectVehicle(vehicleId: string): VehicleInspectorDto | null {
+    const rec = this.ensureTraffic().vehicles.get(vehicleId);
+    if (!rec) return null;
+    return buildVehicleInspector(rec, this.catalogs, this.dossierRegionInput(rec.dto.sectorId));
+  }
+
+  public getCitizenDossier(citizenId: string): CitizenDossierDto | null {
+    const ctx = this.ensureTraffic().citizens.get(citizenId);
+    if (!ctx) return null;
+    return buildCitizenDossier(ctx, this.dossierRegionInput(ctx.sectorId));
   }
 
   public executeCommand(cmd: ClientCommand): CommandOutcome {
+    const outcome = this.dispatchCommand(cmd);
+    if (outcome.ok && TRAFFIC_AFFECTING_COMMANDS.has(cmd.type)) {
+      this.trafficDirty = true;
+    }
+    return outcome;
+  }
+
+  /** Traffic version the latest snapshot refers to (clients refetch `/api/traffic` when it changes). */
+  public getTrafficVersion(): number {
+    this.ensureTraffic();
+    return this.trafficVersion;
+  }
+
+  private dispatchCommand(cmd: ClientCommand): CommandOutcome {
     switch (cmd.type) {
       case "claim_sector":
         return this.handleClaimSector(cmd);
@@ -389,7 +583,113 @@ export class WorldSimulation {
         return this.handleAdminTimeSkip(cmd.jump);
       case "admin_trigger_emergency":
         return this.handleAdminEmergency(cmd.sectorId, cmd.emergencyId);
+      case "create_bus_route":
+        return this.handleCreateBusRoute(cmd);
+      case "delete_bus_route":
+        return this.handleDeleteBusRoute(cmd.sectorId, cmd.routeId);
+      case "repair_road":
+        return this.handleRepairRoad(cmd.sectorId, cmd.segmentId);
     }
+  }
+
+  private handleCreateBusRoute(
+    cmd: Extract<ClientCommand, { type: "create_bus_route" }>
+  ): CommandOutcome {
+    const reg = this.engine.getRegion(cmd.sectorId);
+    reg.lastMayorActivityEpochMs = Date.now();
+    const stopIds = cmd.stopBuildingIds.filter((id, i, all) => all.indexOf(id) === i);
+    if (stopIds.length < 2 || stopIds.length > 16) {
+      return { ok: false, message: "Маршрут должен включать от 2 до 16 разных остановок" };
+    }
+    for (const id of stopIds) {
+      const b = this.buildings.get(id);
+      if (!b || b.catalogId !== "TRN-01" || b.sectorId !== cmd.sectorId) {
+        return { ok: false, message: `Объект ${id} не является автобусной остановкой вашего сектора` };
+      }
+    }
+    const hasDepot = [...this.buildings.values()].some(
+      (b) => b.catalogId === "TRN-02" && b.sectorId === cmd.sectorId
+    );
+    if (!hasDepot) {
+      return { ok: false, message: "Сначала постройте Автобусный парк (TRN-02): он выдаёт лицензии перевозчикам" };
+    }
+
+    const fleetSize = Math.max(1, Math.min(20, Math.round(cmd.fleetSize ?? 4)));
+    const routeNumber = [...this.busRoutes.values()].filter((r) => r.sectorId === cmd.sectorId).length + 1;
+    const id = this.nextId("route");
+    const operator = BUS_OPERATORS[(cmd.sectorId * 7 + routeNumber) % BUS_OPERATORS.length]!;
+    const fee = money(BUS_LICENSE_FEE_PER_BUS_PER_MONTH_UNITS * fleetSize * reg.fxRatePerWcu);
+    const route: BusRouteDto = {
+      id,
+      sectorId: cmd.sectorId,
+      name: (cmd.name ?? "").trim().slice(0, 40) || `№${routeNumber}`,
+      operatorName: `ТОВ «${operator}»`,
+      stopBuildingIds: stopIds,
+      fleetSize,
+      vehicleTypeId: "PT-02",
+      licenseFeeMonthlyMinor: fee.toString(),
+    };
+    this.busRoutes.set(id, route);
+    this.db.upsertBusRoute(route);
+
+    const status = this.recomputeTraffic().state.busRoutes.find((r) => r.routeId === id);
+    const sym = currencySymbol(reg.currency);
+    return {
+      ok: true,
+      message: `Лицензия на маршрут ${route.name} выдана ${route.operatorName} (${fleetSize} авт., сбор ${fmtSym(fee, sym)}/мес). ${status?.statusRu ?? ""}`,
+    };
+  }
+
+  private handleDeleteBusRoute(sectorId: SectorId, routeId: string): CommandOutcome {
+    const route = this.busRoutes.get(routeId);
+    if (!route || route.sectorId !== sectorId) {
+      return { ok: false, message: "Маршрут не найден в вашем секторе" };
+    }
+    this.busRoutes.delete(routeId);
+    this.db.deleteBusRoute(routeId);
+    return { ok: true, message: `Лицензия маршрута ${route.name} (${route.operatorName}) отозвана` };
+  }
+
+  private handleRepairRoad(sectorId: SectorId, segmentId?: string): CommandOutcome {
+    const reg = this.engine.getRegion(sectorId);
+    reg.lastMayorActivityEpochMs = Date.now();
+    const targets = [...this.segments.values()].filter(
+      (s) =>
+        s.sectorId === sectorId &&
+        isRoadKind(s.kind) &&
+        s.healthPercent < 100 &&
+        (segmentId ? s.id === segmentId : s.healthPercent < 75)
+    );
+    if (targets.length === 0) {
+      return {
+        ok: false,
+        message: segmentId ? "Дорога не найдена или уже в идеальном состоянии" : "В секторе нет изношенных дорог (<75%)",
+      };
+    }
+    let cost = 0n;
+    for (const s of targets) {
+      if (!isRoadKind(s.kind)) continue;
+      const lengthMeters = Math.hypot(s.toX - s.fromX, s.toY - s.fromY) * 10 * (s.hasBridge ? 3 : 1);
+      cost += roadRepairCost(s.kind, lengthMeters, s.healthPercent, reg.fxRatePerWcu);
+    }
+    const sym = currencySymbol(reg.currency);
+    if (reg.treasuryCashAtCb < cost) {
+      return {
+        ok: false,
+        message: `Недостаточно средств на ремонт: нужно ${fmtSym(cost, sym)}, доступно ${fmtSym(reg.treasuryCashAtCb, sym)}`,
+      };
+    }
+    reg.treasuryCashAtCb -= cost;
+    this.persistSectorState(sectorId);
+    for (const s of targets) {
+      const updated: NetworkSegmentDto = { ...s, healthPercent: 100 };
+      this.segments.set(s.id, updated);
+      this.db.upsertSegment(updated);
+    }
+    return {
+      ok: true,
+      message: `Дорожная служба перестелила ${targets.length} уч. дорог за ${fmtSym(cost, sym)} — прочность 100%`,
+    };
   }
 
   private handleClaimSector(
@@ -525,6 +825,11 @@ export class WorldSimulation {
     for (const [id, b] of this.buildings) {
       if (b.sectorId === sectorId) this.buildings.delete(id);
     }
+    for (const [id, route] of this.busRoutes) {
+      if (route.sectorId === sectorId) this.busRoutes.delete(id);
+    }
+    this.roadServiceLevel.set(sectorId, 1);
+    this.db.setMeta(`roadService:S${sectorId}`, "1");
     reg.factories.length = 0;
     this.db.deleteSectorEntities(sectorId);
 
@@ -723,6 +1028,22 @@ export class WorldSimulation {
         cmd.tileY < existing.tileY + existing.depth && cmd.tileY + d > existing.tileY;
       if (overlapX && overlapY) {
         return { ok: false, message: "Площадка пересекается с уже построенным объектом" };
+      }
+    }
+
+    // Transit boarding points must sit on their network (GDD §5.4)
+    if (entry.id === "TRN-01" || entry.id === "TRN-09") {
+      const layer = entry.id === "TRN-09" ? "metro" : "road";
+      const graph = buildNetworkGraph([...this.segments.values()], layer);
+      const onNetwork = locateRectOnGraph(graph, { x: cmd.tileX, y: cmd.tileY, width: w, depth: d }, 3);
+      if (!onNetwork) {
+        return {
+          ok: false,
+          message:
+            entry.id === "TRN-09"
+              ? "Станция метро ставится только над тоннелем метро (слой «Под землёй»)"
+              : `«${entry.nameRu}» нужно ставить вплотную к улице`,
+        };
       }
     }
 
@@ -1026,6 +1347,11 @@ export class WorldSimulation {
     if (cmd.cityNewPlantShare !== undefined) {
       reg.levers.cityNewPlantShare = Math.max(0.1, Math.min(1, cmd.cityNewPlantShare));
     }
+    if (cmd.roadServiceLevel !== undefined) {
+      const level = Math.max(0, Math.min(2, Math.round(cmd.roadServiceLevel))) as RoadServiceLevel;
+      this.roadServiceLevel.set(cmd.sectorId, level);
+      this.db.setMeta(`roadService:S${cmd.sectorId}`, String(level));
+    }
     if (cmd.toggleDecreeId) {
       const idx = reg.levers.activeDecreeIds.indexOf(cmd.toggleDecreeId);
       if (idx >= 0) {
@@ -1145,6 +1471,7 @@ export class WorldSimulation {
   }
 
   public getSnapshot(): WorldSnapshotDto {
+    const traffic = this.ensureTraffic();
     const cal = computeDualCalendar(this.totalGameSeconds, this.catalogs.unitsAndTime.timeBase);
     const seasonDay = Math.min(30, Math.floor(this.totalGameSeconds / 86_400) + 1);
 
@@ -1168,7 +1495,8 @@ export class WorldSimulation {
         households,
         happinessIndex: reg.happinessIndex,
         avgLandValueUnits: 120_000 + sectorBuildings.length * 4_500,
-        freightAndTransitVolumeTons: 25_000 + this.segments.size * 1_200,
+        freightAndTransitVolumeTons:
+          25_000 + this.segments.size * 1_200 + (traffic.state.sectors.find((t) => t.sectorId === sectorId)?.truckTripsPerHour ?? 0) * 720 * 25,
         tier3And4OutputInWcu: (tier34Count + 1) * 15_000_000,
         avgProductQualityStars: Math.min(5, 3 + tier34Count * 0.25),
       };
@@ -1263,6 +1591,9 @@ export class WorldSimulation {
       zones: [...this.zones.values()],
       emergencies: [...this.emergencies],
       recentChat: [...this.recentChat],
+      trafficVersion: this.trafficVersion,
+      busRoutes: [...this.busRoutes.values()],
+      transport: traffic.state.sectors,
     };
   }
 

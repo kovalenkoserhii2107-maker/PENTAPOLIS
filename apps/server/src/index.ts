@@ -7,6 +7,9 @@
  * - `GET  /api/map-meta` — Peninsula metadata, sector land counts, 5 gateways, 25 resource deposits
  * - `GET  /api/map.bin`  — Binary `2,000,000`-byte buffer (`surface[1,000,000]` + `owner[1,000,000]`) for <5ms load
  * - `GET  /api/snapshot` — Full `WorldSnapshotDto`
+ * - `GET  /api/traffic`  — Live `TrafficStateDto` (sampled vehicles, segment loads & wear, transit stats)
+ * - `GET  /api/vehicle/:id` — Vehicle inspector card (owner, route, cargo, speed, wear, driver link)
+ * - `GET  /api/citizen/:id` — Citizen dossier (identity, home/work, monthly ledger, thoughts)
  * - `POST /api/command`  — Execute a `ClientCommand` over REST & broadcast updated snapshot
  * - `WS   /ws`           — Live multiplayer state & command sync
  */
@@ -78,9 +81,16 @@ export function createPentapolisServer(
     }
   };
 
+  let lastBroadcastTrafficVersion = -1;
   const broadcastSnapshot = () => {
     if (clients.size === 0) return;
     broadcast({ type: "world_snapshot", snapshot: world.getSnapshot() });
+    // Vehicle paths only travel when the tactical tick or a command re-routed traffic
+    const version = world.getTrafficVersion();
+    if (version !== lastBroadcastTrafficVersion) {
+      lastBroadcastTrafficVersion = version;
+      broadcast({ type: "traffic_state", traffic: world.getTrafficState() });
+    }
   };
 
   const server = Bun.serve<{ connectedAt: number }>({
@@ -151,6 +161,26 @@ export function createPentapolisServer(
         return jsonResponse(world.getSnapshot());
       }
 
+      if (url.pathname === "/api/traffic" && req.method === "GET") {
+        return jsonResponse(world.getTrafficState());
+      }
+
+      if (url.pathname.startsWith("/api/vehicle/") && req.method === "GET") {
+        const id = decodeURIComponent(url.pathname.slice("/api/vehicle/".length));
+        const card = world.inspectVehicle(id);
+        return card
+          ? jsonResponse(card)
+          : jsonResponse({ ok: false, error: `Транспорт ${id} уже покинул карту` }, 404);
+      }
+
+      if (url.pathname.startsWith("/api/citizen/") && req.method === "GET") {
+        const id = decodeURIComponent(url.pathname.slice("/api/citizen/".length));
+        const dossier = world.getCitizenDossier(id);
+        return dossier
+          ? jsonResponse(dossier)
+          : jsonResponse({ ok: false, error: `Гражданин ${id} не найден` }, 404);
+      }
+
       if (url.pathname === "/api/command" && req.method === "POST") {
         return req
           .json()
@@ -182,6 +212,7 @@ export function createPentapolisServer(
       open(ws) {
         clients.add(ws);
         sendMsg(ws, { type: "world_snapshot", snapshot: world.getSnapshot() });
+        sendMsg(ws, { type: "traffic_state", traffic: world.getTrafficState() });
       },
       message(ws, raw) {
         try {
@@ -209,7 +240,8 @@ export function createPentapolisServer(
     },
   });
 
-  // 5-tier real-time micro-tick (`1s` real = `30s` game time, GDD §1.4)
+  // 5-tier real-time micro-tick (`1s` real = `30s` game time, GDD §1.4); the world re-routes
+  // traffic on the Tier 3 tactical tick (every 20 real seconds = 600 game seconds)
   let tickTimer: ReturnType<typeof setInterval> | null = null;
   let microTickCounter = 0;
   if (options.enableRealtimeLoop !== false) {

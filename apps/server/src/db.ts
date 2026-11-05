@@ -3,13 +3,14 @@
  *
  * Persists world clock, sector claims & sovereign currencies, placed 90°/45° network segments,
  * RCI zones, placed buildings (including 10%/90% co-invested equity states), monthly double-entry
- * audit snapshots, and Council / bilateral Mayor chat messages.
+ * audit snapshots, Council / bilateral Mayor chat messages and licensed bus routes.
  */
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   BuildingDto,
+  BusRouteDto,
   ChatMessageDto,
   CurrencyCode,
   NetworkKind,
@@ -97,6 +98,17 @@ export class WorldDatabase {
         construction_progress REAL NOT NULL,
         city_equity_share REAL NOT NULL,
         stalled_awaiting_private INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS bus_routes (
+        id TEXT PRIMARY KEY,
+        sector_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        operator_name TEXT NOT NULL,
+        stop_building_ids TEXT NOT NULL,
+        fleet_size INTEGER NOT NULL,
+        vehicle_type_id TEXT NOT NULL,
+        license_fee_monthly_minor TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS chat_messages (
@@ -251,6 +263,64 @@ export class WorldDatabase {
       .run(sectorId, `${keepSegmentIdPrefix}%`);
     this.db.query("DELETE FROM zones WHERE sector_id = ?1").run(sectorId);
     this.db.query("DELETE FROM buildings WHERE sector_id = ?1").run(String(sectorId));
+    this.db.query("DELETE FROM bus_routes WHERE sector_id = ?1").run(sectorId);
+  }
+
+  public loadBusRoutes(): BusRouteDto[] {
+    const rows = this.db
+      .query<
+        {
+          id: string;
+          sector_id: number;
+          name: string;
+          operator_name: string;
+          stop_building_ids: string;
+          fleet_size: number;
+          vehicle_type_id: string;
+          license_fee_monthly_minor: string;
+        },
+        []
+      >("SELECT * FROM bus_routes ORDER BY id")
+      .all();
+    return rows.map((r) => ({
+      id: r.id,
+      sectorId: r.sector_id as SectorId,
+      name: r.name,
+      operatorName: r.operator_name,
+      stopBuildingIds: JSON.parse(r.stop_building_ids) as string[],
+      fleetSize: r.fleet_size,
+      vehicleTypeId: r.vehicle_type_id,
+      licenseFeeMonthlyMinor: r.license_fee_monthly_minor,
+    }));
+  }
+
+  public upsertBusRoute(route: BusRouteDto): void {
+    this.db
+      .query(`
+        INSERT INTO bus_routes (id, sector_id, name, operator_name, stop_building_ids, fleet_size, vehicle_type_id, license_fee_monthly_minor)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          operator_name = excluded.operator_name,
+          stop_building_ids = excluded.stop_building_ids,
+          fleet_size = excluded.fleet_size,
+          vehicle_type_id = excluded.vehicle_type_id,
+          license_fee_monthly_minor = excluded.license_fee_monthly_minor
+      `)
+      .run(
+        route.id,
+        route.sectorId,
+        route.name,
+        route.operatorName,
+        JSON.stringify(route.stopBuildingIds),
+        route.fleetSize,
+        route.vehicleTypeId,
+        route.licenseFeeMonthlyMinor
+      );
+  }
+
+  public deleteBusRoute(id: string): void {
+    this.db.query("DELETE FROM bus_routes WHERE id = ?1").run(id);
   }
 
   public loadZones(): ZoneDto[] {
