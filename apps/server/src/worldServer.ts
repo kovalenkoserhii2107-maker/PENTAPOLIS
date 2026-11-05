@@ -21,6 +21,10 @@ import {
   absBig,
   buildCitizenDossier,
   buildNetworkGraph,
+  connectedComponents,
+  locateOnGraph,
+  runDeveloperMarket,
+  zoneMaterialBill,
   buildVehicleInspector,
   computeBuildingAtLevel,
   computeCreditRating,
@@ -53,6 +57,8 @@ import {
   type NetworkSegmentDto,
   type PeninsulaMapData,
   type RoadServiceLevel,
+  type SectorConstructionStatsDto,
+  type ZoneSiteStatusDto,
   type SectorId,
   type SectorSummaryDto,
   type SerializedMatrixRow,
@@ -137,6 +143,7 @@ export class WorldSimulation {
   private trafficVersion = 0;
   private trafficDirty = true;
   private lastTacticalSlot = 0;
+  private lastConstruction: { sectors: SectorConstructionStatsDto[]; zoneSites: ZoneSiteStatusDto[] } | null = null;
 
   constructor(dbPath = ":memory:") {
     this.catalogs = getMasterCatalogs();
@@ -424,16 +431,28 @@ export class WorldSimulation {
       }
     }
 
-    // Grow private developer occupancy on RCI zones
-    for (const z of this.zones.values()) {
-      if (z.occupancyRatio >= 1) continue;
-      const reg = this.engine.getRegion(z.sectorId);
-      const growthRate = reg.happinessIndex >= 50 ? 0.035 : 0.012;
-      const nextOcc = Math.min(1, z.occupancyRatio + hours * growthRate);
-      const updated: ZoneDto = { ...z, occupancyRatio: Number(nextOcc.toFixed(3)) };
-      this.zones.set(z.id, updated);
-      this.db.upsertZone(updated);
+    // Timed factory/facility upgrades (sheet 22): the plant keeps running at its old level meanwhile
+    for (const b of this.buildings.values()) {
+      if (!b.upgradeTargetLevel) continue;
+      const entry = this.catalogs.buildingsById.get(b.catalogId);
+      const upgradeHours = entry
+        ? computeBuildingAtLevel(entry, this.catalogs.levelCurves, b.upgradeTargetLevel).upgradeTimeGameHours
+        : 0;
+      const progress = upgradeHours > 0 ? (b.upgradeProgress ?? 0) + hours / upgradeHours : 1;
+      const updated: BuildingDto =
+        progress >= 1
+          ? { ...b, level: b.upgradeTargetLevel, upgradeTargetLevel: null, upgradeProgress: 1 }
+          : { ...b, upgradeProgress: Number(progress.toFixed(4)) };
+      if (progress >= 1) {
+        alerts.push(`🏗️ «${entry?.nameRu ?? b.catalogId}» #${b.id} вышел на Ур.${b.upgradeTargetLevel}`);
+        this.trafficDirty = true;
+      }
+      this.buildings.set(b.id, updated);
+      this.db.upsertBuilding(updated);
     }
+
+    // Private developers build zones lot by lot, buying materials (GDD §6.1, sheet 20 Table 5)
+    this.applyDeveloperMarket(hours);
 
     // Axle-load road wear from the live traffic flows (GDD §5.2), offset by the Road Service budget
     const wearBySegment = this.ensureTraffic().segmentWearPerHour;
@@ -462,6 +481,87 @@ export class WorldSimulation {
       this.db.upsertSegment(updated);
     }
     return alerts;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Sprint 4: developer construction market
+  // ---------------------------------------------------------------------------------------------
+
+  /** Whether each sector's starter gateway is linked to that sector's own road network. */
+  private gatewayConnectivity(): Map<SectorId, boolean> {
+    const graph = buildNetworkGraph([...this.segments.values()], "road");
+    const labels = connectedComponents(graph);
+    const result = new Map<SectorId, boolean>(SECTOR_IDS.map((s) => [s, false]));
+    for (const gw of this.map.gateways) {
+      const loc = locateOnGraph(graph, gw.tileX, gw.tileY, 14);
+      if (!loc) continue;
+      const comp = labels[graph.edges[loc.edgeId]!.a];
+      const linked = graph.edges.some((e) => {
+        if (labels[e.a] !== comp) return false;
+        const seg = this.segments.get(e.segmentId);
+        return !!seg && seg.sectorId === gw.sectorId && !seg.id.startsWith("GW-STUB-");
+      });
+      if (linked) result.set(gw.sectorId, true);
+    }
+    return result;
+  }
+
+  private runMarket(hours: number) {
+    const gateways = this.gatewayConnectivity();
+    return runDeveloperMarket({
+      catalogs: this.catalogs,
+      zones: [...this.zones.values()],
+      buildings: [...this.buildings.values()],
+      hours,
+      sectors: SECTOR_IDS.map((sectorId) => {
+        const reg = this.engine.getRegion(sectorId);
+        return {
+          sectorId,
+          happinessIndex: reg.happinessIndex,
+          importDutyRate: reg.levers.importDutyRate,
+          fxRatePerWcu: reg.fxRatePerWcu,
+          gatewayConnected: gateways.get(sectorId) ?? false,
+        };
+      }),
+    });
+  }
+
+  private applyDeveloperMarket(hours: number): void {
+    const result = this.runMarket(hours);
+    for (const z of result.zones) {
+      const zone = this.zones.get(z.zoneId);
+      if (!zone || z.occupancyAfter === z.occupancyBefore) continue;
+      const updated: ZoneDto = { ...zone, occupancyRatio: Number(z.occupancyAfter.toFixed(4)) };
+      this.zones.set(zone.id, updated);
+      this.db.upsertZone(updated);
+      if (z.dwellingsAdded > 0) this.engine.getRegion(zone.sectorId).dwellings += z.dwellingsAdded;
+    }
+    for (const [sectorId, duty] of result.importDutyBySector) {
+      if (duty > 0n) {
+        this.engine.getRegion(sectorId).treasuryCashAtCb += duty;
+        this.persistSectorState(sectorId);
+      }
+    }
+    this.lastConstruction = {
+      sectors: [...result.sectors],
+      zoneSites: result.zones.map((z) => ({
+        zoneId: z.zoneId,
+        fillRatio: z.fillRatio,
+        limitingMaterial: z.limitingMaterial,
+      })),
+    };
+  }
+
+  private constructionSnapshot() {
+    if (!this.lastConstruction) {
+      // Preview one hour of demand without building anything
+      const preview = this.runMarket(1);
+      return {
+        sectors: [...preview.sectors],
+        zoneSites: preview.zones.map((z) => ({ zoneId: z.zoneId, fillRatio: z.fillRatio, limitingMaterial: z.limitingMaterial })),
+      };
+    }
+    return this.lastConstruction;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -831,6 +931,7 @@ export class WorldSimulation {
     this.roadServiceLevel.set(sectorId, 1);
     this.db.setMeta(`roadService:S${sectorId}`, "1");
     reg.factories.length = 0;
+    this.lastConstruction = null;
     this.db.deleteSectorEntities(sectorId);
 
     this.occupiedBySector.set(sectorId, false);
@@ -947,20 +1048,17 @@ export class WorldSimulation {
       y: cmd.y,
       width: w,
       depth: d,
-      occupancyRatio: 0.25,
+      occupancyRatio: 0,
     };
     this.zones.set(zone.id, zone);
     this.db.upsertZone(zone);
+    this.lastConstruction = null;
 
-    // Slightly expand sector dwellings when residential zones are painted
-    if (cmd.zoneKind.startsWith("RES-")) {
-      const addDwellings = cmd.zoneKind === "RES-03" ? w * d * 12 : cmd.zoneKind === "RES-02" ? w * d * 5 : w * d * 1.5;
-      reg.dwellings += addDwellings;
-    }
-
+    // Dwellings appear only as developers actually build them (applyDeveloperMarket)
+    const bill = zoneMaterialBill(cmd.zoneKind, w * d);
     return {
       ok: true,
-      message: `Размечена зона ${cmd.zoneKind} (${w}×${d} тайлов). Частные застройщики начали возведение зданий.`,
+      message: `Размечена зона ${cmd.zoneKind} (${w}×${d} тайлов). Застройщикам понадобится ~${Math.round(bill.tons).toLocaleString("ru-RU")} т стройматериалов.`,
     };
   }
 
@@ -1207,6 +1305,15 @@ export class WorldSimulation {
     if (bld.level >= entry.maxLevel) {
       return { ok: false, message: `Здание «${entry.nameRu}» уже на максимальном Ур.${entry.maxLevel}` };
     }
+    if (bld.upgradeTargetLevel) {
+      return {
+        ok: false,
+        message: `«${entry.nameRu}» уже модернизируется до Ур.${bld.upgradeTargetLevel} (${Math.round((bld.upgradeProgress ?? 0) * 100)}%)`,
+      };
+    }
+    if (bld.constructionProgress < 1) {
+      return { ok: false, message: `«${entry.nameRu}» ещё строится — модернизация после ввода в строй` };
+    }
 
     const nextLevel = bld.level + 1;
     const stats = computeBuildingAtLevel(entry, this.catalogs.levelCurves, nextLevel);
@@ -1247,18 +1354,24 @@ export class WorldSimulation {
     }
 
     this.persistSectorState(sectorId);
+    // Sheet 22 / level curve: each level takes game hours to build; the plant runs at its old level meanwhile
+    const timed = stats.upgradeTimeGameHours > 0;
     const updated: BuildingDto = {
       ...bld,
-      level: nextLevel,
+      level: timed ? bld.level : nextLevel,
       cityEquityShare: Number(newCityShare.toFixed(4)),
-      constructionProgress: 1,
+      upgradeTargetLevel: timed ? nextLevel : null,
+      upgradeProgress: timed ? 0 : 1,
     };
     this.buildings.set(buildingId, updated);
     this.db.upsertBuilding(updated);
 
+    const share = `доля Мэрии: ${Math.round(updated.cityEquityShare * 100)}%, расход: ${fmtSym(cityPay, sym)}`;
     return {
       ok: true,
-      message: `«${entry.nameRu}» модернизировано до Ур.${nextLevel} (доля Мэрии: ${Math.round(updated.cityEquityShare * 100)}%, расход: ${fmtSym(cityPay, sym)})`,
+      message: timed
+        ? `Начата модернизация «${entry.nameRu}» до Ур.${nextLevel}: ${stats.upgradeTimeGameHours} игровых ч (${share})`
+        : `«${entry.nameRu}» модернизировано до Ур.${nextLevel} (${share})`,
     };
   }
 
@@ -1472,6 +1585,7 @@ export class WorldSimulation {
 
   public getSnapshot(): WorldSnapshotDto {
     const traffic = this.ensureTraffic();
+    const construction = this.constructionSnapshot();
     const cal = computeDualCalendar(this.totalGameSeconds, this.catalogs.unitsAndTime.timeBase);
     const seasonDay = Math.min(30, Math.floor(this.totalGameSeconds / 86_400) + 1);
 
@@ -1594,6 +1708,8 @@ export class WorldSimulation {
       trafficVersion: this.trafficVersion,
       busRoutes: [...this.busRoutes.values()],
       transport: traffic.state.sectors,
+      construction: construction.sectors,
+      zoneSites: construction.zoneSites,
     };
   }
 

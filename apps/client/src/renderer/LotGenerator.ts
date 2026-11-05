@@ -3,7 +3,8 @@
  *
  * Uses `pickBuildingVisual()` from `@pentapolis/shared-sim` so every placed building renders
  * deterministically from the 140,580-look catalog, plus animated yellow tower cranes on active
- * or stalled 10%/90% co-invested factory sites!
+ * or stalled 10%/90% co-invested factory sites, timed upgrades, and developer zone sites
+ * (frozen orange cranes where developers ran out of building materials).
  */
 import * as THREE from "three";
 import {
@@ -12,6 +13,7 @@ import {
   type MasterCatalogs,
   type SectorId,
   type ZoneDto,
+  type ZoneSiteStatusDto,
 } from "@pentapolis/shared-sim";
 
 function createCrispFacadeTexture(wallHex: string, accentHex: string, floors: number): THREE.CanvasTexture {
@@ -65,7 +67,8 @@ export class LotGenerator {
     buildings: readonly BuildingDto[],
     zones: readonly ZoneDto[],
     catalogs: MasterCatalogs,
-    selectedBuildingId: string | null
+    selectedBuildingId: string | null,
+    zoneSites: ReadonlyMap<string, ZoneSiteStatusDto> = new Map()
   ): void {
     while (this.group.children.length > 0) {
       const child = this.group.children.pop()!;
@@ -151,6 +154,15 @@ export class LotGenerator {
           this.group.add(box);
         }
       }
+
+      // Developer site crane until the zone is fully built
+      if (z.occupancyRatio < 1) {
+        const site = zoneSites.get(z.id);
+        const outOfMaterials = site !== undefined && site.fillRatio < 0.05;
+        const crane = this.createCrane(9, Math.min(8, z.width * 0.6), outOfMaterials);
+        crane.position.set(z.x + 1, 0, z.y + 1);
+        this.group.add(crane);
+      }
     }
 
     // 2. Render Placed Catalog Buildings (`EXT`, `PRO`, `CMP`, `ASM`, `ENG`, `CIV`, `MEG`, etc.)
@@ -164,6 +176,7 @@ export class LotGenerator {
       const cx = b.tileX + b.width * 0.5;
       const cz = b.tileY + b.depth * 0.5;
       const underConstruction = b.stalledAwaitingPrivate || b.constructionProgress < 1;
+      const upgrading = !!b.upgradeTargetLevel;
 
       const baseFloors = vis?.floors ?? 4;
       const fullHeight = Math.max(2.2, Math.min(22, baseFloors * 0.75 + (b.level - 1) * 1.1));
@@ -226,29 +239,32 @@ export class LotGenerator {
         buildingContainer.add(stack);
       }
 
-      // Yellow Tower Crane for active construction OR stalled 10%/90% factory awaiting private equity!
-      if (underConstruction) {
-        const mastH = curHeight + 4.5;
-        const craneColor = b.stalledAwaitingPrivate ? 0xf59e0b : 0xfacc15;
-        const craneMat = new THREE.MeshLambertMaterial({ color: craneColor });
-        const mast = new THREE.Mesh(new THREE.BoxGeometry(0.45, mastH, 0.45), craneMat);
-        mast.position.set(-bw * 0.35, mastH * 0.5 + 0.2, -bd * 0.35);
-        buildingContainer.add(mast);
-
-        const boomPivot = new THREE.Group();
-        boomPivot.position.set(-bw * 0.35, mastH + 0.2, -bd * 0.35);
-        const jib = new THREE.Mesh(
-          new THREE.BoxGeometry(Math.max(4.5, bw * 0.85), 0.32, 0.32),
-          craneMat.clone()
-        );
-        jib.position.x = Math.max(1.5, bw * 0.3);
-        boomPivot.add(jib);
-        buildingContainer.add(boomPivot);
-        this.cranes.push({ boom: boomPivot, stalled: b.stalledAwaitingPrivate });
+      // Yellow Tower Crane for active construction, a timed upgrade, or a stalled 10%/90% factory
+      if (underConstruction || upgrading) {
+        const crane = this.createCrane(curHeight + 4.5, Math.max(4.5, bw * 0.85), b.stalledAwaitingPrivate);
+        crane.position.set(-bw * 0.35, 0.2, -bd * 0.35);
+        buildingContainer.add(crane);
       }
 
       this.group.add(buildingContainer);
     }
+  }
+
+  /** Tower crane (mast + slewing jib); stalled cranes are orange and do not slew. */
+  private createCrane(mastHeight: number, jibLength: number, stalled: boolean): THREE.Group {
+    const craneMat = new THREE.MeshLambertMaterial({ color: stalled ? 0xf59e0b : 0xfacc15 });
+    const crane = new THREE.Group();
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.45, mastHeight, 0.45), craneMat);
+    mast.position.y = mastHeight * 0.5;
+    crane.add(mast);
+    const boomPivot = new THREE.Group();
+    boomPivot.position.y = mastHeight;
+    const jib = new THREE.Mesh(new THREE.BoxGeometry(jibLength, 0.32, 0.32), craneMat.clone());
+    jib.position.x = Math.max(1.5, jibLength * 0.35);
+    boomPivot.add(jib);
+    crane.add(boomPivot);
+    this.cranes.push({ boom: boomPivot, stalled });
+    return crane;
   }
 
   public updateAnimations(elapsedSeconds: number): void {

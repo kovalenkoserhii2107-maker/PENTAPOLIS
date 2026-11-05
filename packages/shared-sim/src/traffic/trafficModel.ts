@@ -19,6 +19,7 @@ import { computeBuildingAtLevel, type BuildingCatalogEntry } from "../catalogs/b
 import type { SectorId } from "../catalogs/visuals.ts";
 import type { ExternalGatewayPoint } from "../map/PeninsulaGrid.ts";
 import { mulRate, type Money } from "../money/money.ts";
+import { commodityUnitTons } from "../construction/developerMarket.ts";
 import type {
   BuildingDto,
   BusRouteDto,
@@ -131,18 +132,6 @@ const BUILDING_SNAP_TILES = 10;
 const GATEWAY_SNAP_TILES = 14;
 const EMPTY_RETURN_WEAR_SHARE = 0.12;
 const PCE: Readonly<Record<VehicleRole, number>> = { commuter: 1, freight: 2.5, bus: 2, metro: 0 };
-
-/** Tons carried per accounting unit of non-tonnage commodities. */
-const UNIT_TONS: ReadonlyArray<readonly [RegExp, number]> = [
-  [/pallet/i, 0.1],
-  [/machine/i, 5],
-  [/batch/i, 0.2],
-  [/module/i, 8],
-  [/set/i, 0.5],
-  [/vehicle/i, 12],
-  [/car/i, 1.3],
-  [/crate/i, 0.3],
-];
 
 function truckForCommodity(commodity: string): string {
   if (/ore|coal|limestone|grain|quartz/i.test(commodity)) return "TRK-04";
@@ -270,11 +259,7 @@ function zoneCenter(z: ZoneDto): [number, number] {
   return [z.x + z.width / 2, z.y + z.depth / 2];
 }
 
-function unitTons(unit: string): number {
-  if (/^t\b|tons?/i.test(unit.trim())) return 1;
-  for (const [re, tons] of UNIT_TONS) if (re.test(unit)) return tons;
-  return 1;
-}
+const unitTons = commodityUnitTons;
 
 function vehicleIdFor(seed: string): string {
   return `VH-${(hashString(`veh:${seed}`) % 900_000) + 100_000}`;

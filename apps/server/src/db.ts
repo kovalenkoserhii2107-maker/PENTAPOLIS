@@ -42,6 +42,7 @@ export class WorldDatabase {
     this.db.exec("PRAGMA synchronous = NORMAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.initSchema();
+    this.migrateSchema();
   }
 
   private initSchema(): void {
@@ -132,6 +133,19 @@ export class WorldDatabase {
         created_at_iso TEXT NOT NULL
       );
     `);
+  }
+
+  /** Additive column migrations for worlds created by older builds. */
+  private migrateSchema(): void {
+    const cols = new Set(
+      this.db.query<{ name: string }, []>("PRAGMA table_info(buildings)").all().map((c) => c.name)
+    );
+    if (!cols.has("upgrade_target_level")) {
+      this.db.exec("ALTER TABLE buildings ADD COLUMN upgrade_target_level INTEGER");
+    }
+    if (!cols.has("upgrade_progress")) {
+      this.db.exec("ALTER TABLE buildings ADD COLUMN upgrade_progress REAL NOT NULL DEFAULT 1");
+    }
   }
 
   public getJournalMode(): string {
@@ -378,6 +392,8 @@ export class WorldDatabase {
           construction_progress: number;
           city_equity_share: number;
           stalled_awaiting_private: number;
+          upgrade_target_level: number | null;
+          upgrade_progress: number;
         },
         []
       >("SELECT * FROM buildings")
@@ -396,6 +412,8 @@ export class WorldDatabase {
       constructionProgress: r.construction_progress,
       cityEquityShare: r.city_equity_share,
       stalledAwaitingPrivate: r.stalled_awaiting_private === 1,
+      upgradeTargetLevel: r.upgrade_target_level,
+      upgradeProgress: r.upgrade_progress,
     }));
   }
 
@@ -404,14 +422,17 @@ export class WorldDatabase {
       .query(`
         INSERT INTO buildings (
           id, catalog_id, sector_id, tile_x, tile_y, width, depth,
-          orientation_deg, level, construction_progress, city_equity_share, stalled_awaiting_private
+          orientation_deg, level, construction_progress, city_equity_share, stalled_awaiting_private,
+          upgrade_target_level, upgrade_progress
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         ON CONFLICT(id) DO UPDATE SET
           level = excluded.level,
           construction_progress = excluded.construction_progress,
           city_equity_share = excluded.city_equity_share,
-          stalled_awaiting_private = excluded.stalled_awaiting_private
+          stalled_awaiting_private = excluded.stalled_awaiting_private,
+          upgrade_target_level = excluded.upgrade_target_level,
+          upgrade_progress = excluded.upgrade_progress
       `)
       .run(
         b.id,
@@ -425,7 +446,9 @@ export class WorldDatabase {
         b.level,
         b.constructionProgress,
         b.cityEquityShare,
-        b.stalledAwaitingPrivate ? 1 : 0
+        b.stalledAwaitingPrivate ? 1 : 0,
+        b.upgradeTargetLevel ?? null,
+        b.upgradeProgress ?? 1
       );
   }
 
