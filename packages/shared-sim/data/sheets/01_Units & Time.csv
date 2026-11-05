@@ -1,0 +1,57 @@
+,"PENTAPOLIS: UNITS, TIME BASE & CANONICAL COSTS"
+,"One source for units and conversion factors. Other sheets reference these cells, so change a value here rather than in the sheet that uses it. Blue = input, black = formula."
+,,,,,,,
+,SECTION 1: TIME BASE,,,,,,
+,Parameter,Value,Unit,Note,,,
+,Real seconds per game hour,120.0,s,1 game hour = 2 real minutes,,,
+,Game hours per game day,24.0,h,,,,
+,Game days per game month,30.0,days,,,,
+,Game hours per game month,720,h,Production rates x this value = monthly volumes,,,
+,Real hours per game month,24,real h,1 game month = 1 real day,,,
+,Game months per game year,12.0,months,,,,
+,Real days per game year,12,real days,,,,
+,Real days per year of citizen life (life clock),1.0,real days,"Ageing, births, education, retirement and death run on this clock (GDD §56)",,,
+,Years of citizen life per game month,1,years,One game month of the economy equals one year of life,,,
+,Server micro-tick,1.0,real s,Player commands apply immediately; the tick only advances time (GDD §59),,,
+,Game time per micro-tick,30,game s,1 real second = 30 game seconds,,,
+,Accounting rule,"Economic clock: production and transport rates are per game hour, money flows per game month, stocks are measured at the start of a game month. Life clock: citizen age and education are counted in years of life, one real day each.",,,,,
+,,,,,,,
+,SECTION 2: COMMODITY UNITS (row order matches Production Chains rows 7-30),,,,,,
+,Commodity,Tier,Accounting Unit,Mass per Unit (t),Cargo Class,"Output per Game Hour, Lv.1 (units)","Output per Game Month, Lv.1 (units)"
+,Iron Ore,Tier 1,t,1.0,Dry bulk,8,5760
+,Coal,Tier 1,t,1.0,Dry bulk,10,7200
+,Crude Oil,Tier 1,t,1.0,Liquid bulk (pipeline or tanker),6,4320
+,Limestone & Granite,Tier 1,t,1.0,Dry bulk,12,8640
+,Grain,Tier 1,t,1.0,Dry bulk,8,5760
+,Timber,Tier 1,t,1.0,Dry bulk,6.666666667,4800
+,Natural Gas,Tier 1,"1,000 m3",0.72,Gas (pipeline or LNG tanker),8,5760
+,Quartz & Silica Sand,Tier 1,t,1.0,Dry bulk,8,5760
+,Steel,Tier 2,t,1.0,Break bulk,4,2880
+,Fuel & Plastics,Tier 2,t,1.0,Liquid bulk (pipeline or tanker),3.428571429,2468.571429
+,Fertilizers & Polymers,Tier 2,t,1.0,Dry bulk,4,2880
+,Cement,Tier 2,t,1.0,Dry bulk,4.8,3456
+,Flour & Food,Tier 2,pallet (100 kg),1.0,Packaged,6,4320
+,Lumber,Tier 2,t,1.0,Break bulk,5.454545455,3927.272727
+,Industrial Machinery,Tier 3,machine,5.0,Heavy lift,2,1440
+,Microchips,Tier 3,batch,0.1,Container (high value),1.6,1152
+,Consumer Goods,Tier 3,pallet (100 kg),0.5,Container,2.666666667,1920
+,Construction Prefabs,Tier 3,module,10.0,Heavy lift,2.4,1728
+,Auto Components & Engines,Tier 3,set,0.25,Container,2.181818182,1570.909091
+,Heavy Transport Vehicles,Tier 4,vehicle,40.0,Ro-Ro / heavy lift,1,720
+,Economy Car,Tier 4,car,1.2,Car carrier (Ro-Ro),1.333333333,960
+,Mid-Range Car,Tier 4,car,1.5,Car carrier (Ro-Ro),1.090909091,785.4545455
+,Premium Car,Tier 4,car,2.0,Car carrier (Ro-Ro),0.8,576
+,Luxury Goods,Tier 4,crate,0.2,Container (high value),0.8,576
+,Electricity,Utility,MWh,0.0,Power grid (HV line),50.0,36000
+,,,,,,,
+,SECTION 3: CANONICAL INFRASTRUCTURE COSTS AND CAPACITIES,,,,,,
+,Item,Value,Unit,Note,,,
+,2-lane local street (includes under-road utility collector),180000,$/km,Other road classes: Logistics Hubs & Road Physics rows 30-33,,,
+,Heavy rail track,180000.0,$/km,,,,
+,Trunk gas or oil pipeline,180000.0,$/km,,,,
+,Compressor station,600000.0,$ each,One per 150 km of trunk line or per border crossing,,,
+,"Trunk pipeline capacity, standard (60 bar)",1000.0,"1,000 m3 (or t of oil) per game hour",Matches the scale of sector gas demand in Player Sectors Balance,,,
+,"Trunk pipeline capacity, boosted (110 bar)",1600.0,"1,000 m3 (or t of oil) per game hour",,,,
+,High-voltage power line,120000.0,$/km,,,,
+,Substation,350000.0,$ each,,,,
+,High-voltage line capacity,500.0,MW,,,,

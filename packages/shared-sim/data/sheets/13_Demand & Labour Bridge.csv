@@ -1,0 +1,43 @@
+,"PENTAPOLIS: DEMAND & LABOUR BRIDGE (HOUSEHOLD MONEY TO GOODS, VENUES AND JOBS)"
+,"Links the Money Flow Model (dollars) to Production Chains (units) and to the labour market. Blue = input, black = formula, green = link. GDD §75 and §79."
+,,,,,,,,,,,
+,SECTION 1: HOUSEHOLD BASKET TO PHYSICAL GOODS (GDD §79),,,,,,,,,,
+,Basket Category,Household Spending ($/month),Commodity,Goods Share of Retail Price,Price per Unit ($),Units per Game Month,Per Household per Month (units),Rest of the Price,,,
+,Food,184650000,Flour & Food,0.35,85,760323.5294,2.764812834,"Retail margin, cooking, packaging",,,
+,Consumer goods,152262500,Consumer Goods,0.45,420,163138.3929,0.5932305195,Retail margin and shop staff,,,
+,Utilities: electricity,59250000,Electricity (MWh),0.45,45,592500,2.154545455,Grid operation,,,
+,Utilities: heating gas,59250000,"Natural Gas (1,000 m3)",0.2,55,215454.5455,0.7834710744,Distribution,,,
+,Utilities: water,59250000,Water (m3),0.15,1.2,7406250,26.93181818,Remaining 20% of utilities: maintenance staff,,,
+,Transport: fuel,66737500,Fuel & Plastics,0.4,210,127119.0476,0.4622510823,"Filling stations, public transport staff",,,
+,Transport: car purchases,66737500,Mid-Range Car (average),0.3,22000,910.0568182,0.003309297521,"Dealers, repair shops (30% services)",,,
+,Leisure: food and drink,85025000,Flour & Food,0.2,85,200058.8235,0.727486631,Venue staff and margin,,,
+,Leisure: luxury goods,85025000,Luxury Goods,0.1,3400,2500.735294,0.009093582888,"Remaining 70%: staff, shows, venue margin",,,
+,Total household consumption,547925000,,,,,,OK: equals Money Flow Model consumption,,,
+,Physical sanity check,Food per household (kg per month; 1 pallet = 100 kg),276.4812834,,"Target 80-300 kg including restaurant and leisure food; above that, raise the Flour & Food price",,,,,,
+,,,,,,,,,,,
+,SECTION 2: LEISURE AND ENTERTAINMENT BY CLASS (GDD §75),,,,,,,,,,
+,Class,Typical Venues,Base Leisure per Household ($),Spending from Savings per Household ($),Total Leisure Spending ($/month),Gambling Share,Gambling Spending ($/month),Average Venue Revenue ($/month),Venues Supported,Staff per Venue,Leisure Jobs
+,Workers & Operators,"Cheap bars, dance clubs, cinemas, football, betting shops and slot halls",120,20.16806723,20850000,0.15,3127500,30000.0,695,8.0,5560
+,Engineers & Specialists,"Theatres, restaurants, fitness clubs, concerts, weekend resorts",300,101.8181818,27625000,0.06,1657500,80000.0,345.3125,15.0,5179.6875
+,Entrepreneurs & Elite,"Country clubs, yacht marinas, fine dining, golf, private casinos, art auctions",900,327.2727273,33750000,0.1,3375000,400000.0,84.375,40.0,3375
+,Retirees & Unemployed,"Parks, community clubs, cafes, cheap coach trips",60,33.33333333,2800000,0.03,84000,20000.0,140,4.0,560
+,Total,,,,85025000,,8244000,,1264.6875,,14674.6875
+,Problem gambling,Gamblers who lose too much fall into hardship (GDD §77); the simulator uses 0.15% of working households per month.,,,,,,,,,
+,,,,,,,,,,,
+,SECTION 3: LABOUR BALANCE (GDD §79),,,,,,,,,,
+,Earners per working household,1.1,people,,,,,,,,
+,Labour supply,269500,people,"Workers, engineers and elite households x earners",,,,,,,
+,,,,,,,,,,,
+,Job Source,Units,Staff per Unit,Jobs,Note,,,,,,
+,Extraction and Tier 1 facilities (average Lv.2),300.0,51.0,15300,Units are the built peninsula base: player input,,,,,,
+,Tier 2 processing plants (average Lv.3),200.0,105.0,21000,,,,,,,
+,Tier 3 component plants (average Lv.3),120.0,105.0,12600,,,,,,,
+,Tier 4 assembly plants (average Lv.4),40.0,170.0,6800,,,,,,,
+,"Logistics hubs, construction and developers",1.0,40000.0,40000,Direct jobs,,,,,,
+,Retail and service outlets,4852,6.0,29112,Outlet counts from Urban Table 4,,,,,,
+,Leisure venues,1.0,14674.6875,14674.6875,From Section 2,,,,,,
+,Public sector,1.0,43682.03125,43682.03125,"Public wage bill / $3,200 average public wage",,,,,,
+,Banks and insurers,1.0,5481.666667,5481.666667,"Bank wage bill / $4,500 average",,,,,,
+,"Household and personal services (care, repair, informal work)",1.0,60000.0,60000,Direct jobs,,,,,,
+,Total jobs,,,248650.3854,,,,,,,
+,Unemployment rate,0.07736406153,,,Normal labour market,,,,,,

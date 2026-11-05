@@ -1,0 +1,29 @@
+{
+  "name": "pentapolis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PENTAPOLIS — 2.5D persistent async city-building, economic and geopolitical simulator for 5 mayors on one peninsula.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun run tools/dev.ts",
+    "dev:server": "bun run --cwd apps/server dev",
+    "dev:client": "bun run --cwd apps/client dev",
+    "build": "bun run --cwd apps/client build",
+    "test": "bun test packages/shared-sim apps/server",
+    "typecheck": "bun run typecheck:shared && bun run typecheck:server && bun run typecheck:client",
+    "typecheck:shared": "tsc -p packages/shared-sim/tsconfig.json --noEmit",
+    "typecheck:server": "tsc -p apps/server/tsconfig.json --noEmit",
+    "typecheck:client": "tsc -p apps/client/tsconfig.json --noEmit",
+    "export-sheets": "bun run tools/export-sheets.ts",
+    "sim:run36": "bun run packages/shared-sim/scripts/run36.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.18",
+    "fflate": "^0.8.2",
+    "typescript": "^5.6.3"
+  }
+}

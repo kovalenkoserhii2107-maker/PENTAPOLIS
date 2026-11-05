@@ -1,0 +1,12 @@
+,"PENTAPOLIS: REGIONAL BALANCE OF PAYMENTS (ONE CURRENCY, FIVE REGIONS)"
+,"[CANON NOTE v3.0: Aggregate MRE reference. Per §§88–98, actual gameplay uses 5 Sovereign Currencies (Hryvnia ₴ etc.) + MRE modeled in 'Regional Money Model'. Baseline Peninsula-Aggregate Reference (Superseded at regional level by Five-Region Money Model with 5 Sovereign Currencies + MRE per §§88–98).] With one currency a region that keeps buying more than it sells loses deposits to its neighbours, like a country in a currency union. Shares are inputs; money totals come from the Money Flow Model and the customs sheet. GDD §80."
+,,,,,,,,,,,
+,Sector,Households Share,Exports to Outer World Share,Imports from Outer World Share,Tourism & Visa Share,Sales to Other Players Share,Purchases from Other Players Share,Current Account ($/month),Regional Deposits ($),Months until Deposits Run Out,Status
+,Sector 1 (Northern Basin: iron & coal),0.22,0.25,0.18,0.1,0.28,0.18,32261000,1100000000,-,Surplus: money flows in
+,Sector 2 (North-East Shelf: oil & gas),0.18,0.3,0.15,0.1,0.3,0.15,56916000,900000000,-,Surplus: money flows in
+,Sector 3 (Central Valley: agriculture & timber),0.22,0.15,0.2,0.2,0.18,0.2,-6220000,1100000000,176.8488746,Deficit: slow drain
+,Sector 4 (Southern Foothills: stone & cement),0.18,0.1,0.22,0.15,0.12,0.25,-34966500,900000000,25.73892154,Deficit: slow drain
+,Sector 5 (Eastern Cape: tech & port),0.2,0.2,0.25,0.45,0.12,0.22,-5480500,1000000000,182.4651035,Deficit: slow drain
+,Peninsula total / check,1,1,1,1,1,1,42510000,5000000000,,OK: shares add to 100% and total equals the peninsula trade balance
+,,,,,,,,,,,
+,How a region stops the drain,"Export more to neighbours or the Outer World, attract tourists, replace imports with local plants, or borrow: a regional bond sold to banks in a surplus region moves deposits back (GDD §80)."

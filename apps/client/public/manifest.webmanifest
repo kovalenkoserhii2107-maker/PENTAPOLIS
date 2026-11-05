@@ -1,0 +1,10 @@
+{
+  "name": "PENTAPOLIS — Экономический Симулятор Полуострова",
+  "short_name": "PENTAPOLIS",
+  "description": "2.5D асинхронный градостроительный и макроэкономический симулятор для 5 мэров на одном полуострове",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0b1220",
+  "theme_color": "#0b1220"
+}

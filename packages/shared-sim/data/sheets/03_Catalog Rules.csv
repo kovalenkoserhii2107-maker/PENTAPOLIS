@@ -1,0 +1,47 @@
+,"PENTAPOLIS: CATALOG RULES (STAGES, ID PREFIXES, COST RULES, FIELD MEANINGS)",,,,,
+,Rules behind the Building Catalog. A region unlocks a stage when it meets the household threshold and owns the key building. GDD §83.,,,,,
+,,,,,,
+,SECTION 1: DEVELOPMENT STAGES (per region),,,,,
+,Stage,Name,Households in Region,Key Building Required,What Opens,Buildings in Catalog
+,S0,Greenfield,0.0,Town Hall,"Tier 1 extraction, starter power, pier, low-density zones, KPP",25
+,S1,Settlement,1000.0,School,"Tier 2 processing, rail, pipelines, schools, clinics, police, fire",41
+,S2,Town,5000.0,Technical College,"Tier 3 components, seaport, hydro, hospitals, offices, theatres",30
+,S3,City,15000.0,University,"Tier 4 assembly, airports, LNG, high density, elite leisure, finance",26
+,S4,Metropolis,40000.0,R&D Technopark,"Art market, top upgrade levels, Council voting weight",2
+,S5,Endgame,50000.0,3 of 5 regions at S4,Megaprojects (§66),3
+,Total,,,,,127
+,,,,,,
+,SECTION 2: ID PREFIXES AND CATEGORIES,,,,,
+,EXT,Tier 1 extraction (Contour B),Treasury: 100% city enterprise; the mayor may sell shares later,Manual (on deposit),8,
+,PRO / CMP / ASM,Tiers 2-4 processing,"Firms: 10% city share, 90% private investors (city may pay up to 100%)",Manual (city allocates land),16,
+,ENG / INF,Energy (Contour B) and line infrastructure,Treasury: city enterprise or city infrastructure,Manual or line (per km),19,
+,LOG / TRN,"Logistics hubs, stations, ports, airports, KPP; public transport",Treasury: city logistics and transport enterprises; buses run by licensed operators,Manual or line,22,
+,UTL,Utilities,Treasury (public service); car scrapyard is private,Manual,5,
+,CIV / EDU / HLT / SAF,Public services,Treasury (public service),Manual,13,
+,RES / COM / OFF,Zoned buildings,Firms: developers; households own or rent,Zoned,8,
+,BIZ,Private businesses,Firms: private (opened by citizens),Automatic in commercial zones,12,
+,LEI / TOU,Leisure and tourism,Firms: private,"Automatic, large venues manual",19,
+,FIN,Finance,Banks; exchange floor is a city enterprise,Manual (office zone),2,
+,MEG,Megaprojects (Central Core),Joint venture: shares to contributing mayors,Central Core,3,
+,Total,,,,127,
+,Total,,,,127,
+,,,,,,
+,SECTION 3: COST RULES,,,,,
+,Rule,Value,,,,
+,Upkeep excludes wages,Wages are paid separately: staff x class wage from the Money Flow Model,,,,
+,Typical upkeep,1.5-2.5% of build cost per game month for buildings; per km for lines,,,,
+,Build cost of Lv.1 production plants,Tier 1 = starter mine; Tier 2 $2.0M; Tier 3 $3.5M; Tier 4 $6.0M,,,,
+,Upgrades Lv.2-5,"Costs, output multipliers and staff: Zoning & Building Upgrades rows 7-11 (production) and Logistics Hubs rows 7-26 (hubs)",,,,
+,Machinery wear (Lv.3-5),City Systems Section 1 (about 6% of cumulative upgrade capex a year),,,,
+,Build time,Game hours; 1 game hour = 2 real minutes,,,,
+,Unlock,A building opens when its stage is reached and its prerequisite exists in the region,,,,
+,Linked values,"Green cells come from the sheet that owns the number; change them there, not in the catalog",,,,
+,,,,,,
+,SECTION 4: FIELD MEANINGS,,,,,
+,Field,Meaning,,,,
+,Economic Level,Which Money Flow Model column pays for and owns the building,,,,
+,Capacity Lv.1,Main throughput at Lv.1 in the unit given; production uses Units & Time output per game hour,,,,
+,Pollution (0-3),"0 none, 1 light, 2 heavy, 3 severe (coal, steel, cement, refinery)",,,,
+,Land Value Effect,Change of nearby property value and radius in tiles (§38),,,,
+,Service Radius,Coverage radius for public services and shops; 0 = no area effect,,,,
+,Profile Sector,"Sector whose geography favours the building (§2, §19)",,,,

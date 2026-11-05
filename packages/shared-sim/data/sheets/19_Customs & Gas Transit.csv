@@ -1,0 +1,33 @@
+,PENTAPOLIS: CUSTOMS & GAS TRANSIT,,,MAX GAS DELIVERED,MIN DELIVERED COST,MAX FACTORY BONUS,CUSTOMS & VISA REVENUE,AVG SMUGGLING RISK,AVG BORDER QUEUE
+,"Cross-border hydrocarbon transit corridors, tariff regimes, visa controls & smuggling dynamics",,,1600,75,0.4,11475790,0.1481,72
+,Macro Logistics & Geopolitical Controls • Multi-Neighbor Transit • Customs Border Policy,,,"1,000 m3 per game hour","per 1,000 m3 floor",efficiency vs coal,monthly state fiscal intake,contraband leakage rate,minutes clearance delay
+,SECTION 1: GAS PIPELINE TRANSIT & LOGISTICS ROUTE COMPARISON
+,Transit Route / Transport Architecture,Transit Distance (km),"Capacity (1,000 m3 per game hour)","Transit Fee ($/1,000 m3)",Intermediary Offtake (%),Compressor Pressure Lever,"Delivered Cost ($/1,000 m3)",Reliability & Sovereign Risk,Factory Efficiency Bonus (Gas vs Coal)
+,Direct Domestic Pipeline,150.0,1000,0.0,0.0,Standard (60 Bar) • Baseline,75,99.5% (Domestic Sovereign Control),0.4
+,Transit via 1 Neighbor (Bilateral),320.0,1150,18.5,0.05,High (85 Bar) • +15% Boost,97.25,92.0% (Bilateral Treaty Dependent),0.385
+,Transit via 2 Neighbors (Tri-Partite),580.0,1600,34.0,0.12,Ultra-High (110 Bar) • Dual Boosters,118,81.0% (High Chokepoint Dispute Risk),0.35
+,Maritime Cryo LNG Tanker Shuttle,1100.0,400.0,52.0,0.025,Cryogenic (-162°C Liquid Phase),128.875,95.0% (High Autonomy • Sea Weather),0.4
+,Transit System Benchmark / Average,537.5,1037.5,26.125,0.04875,Multi-Modal Gas Architecture,104.78125,Diversified Supply Grid,0.38375
+,SECTION 1B: FACTORY EFFICIENCY DYNAMICS (NATURAL GAS VS COAL)
+,Heavy Industry Sector,Coal Fuel Cost ($/t),Gas Fuel Cost ($/t),Fuel Cost Savings (%),Output Yield Boost (%),Emissions Reduction (%),Compressor Lever Setting,Flow Multiplier,Operational Strategic Payoff
+,Blast Furnace Steel Mills,120.0,85.0,0.2916666667,0.4,0.55,60 Bar (Standard),1.00x Base Flow,+40% Smelting Speed; -25% Thermal Costs
+,Rotary Kiln Cement Works,95.0,68.0,0.2842105263,0.35,0.48,85 Bar (High-Press),1.15x Boosted Flow,+35% Thermal Efficiency; Low Kiln Ash
+,Petrochemical & Polymer Plants,145.0,98.0,0.324137931,0.5,0.7,110 Bar (Ultra-High),1.30x Peak Flow,Direct Methane Synthesis Feedstock
+,Sector Benchmark / Average,120,83.66666667,0.3000050413,0.4166666667,0.5766666667,Optimized Gas Infrastructure,1.15x Avg Multiplier,Heavy Industry Modernization Benchmark
+,SECTION 2: BORDER CUSTOMS HUB (КПП) CONTROLS & VISA REGIMES
+,BORDER HUB POLICY PART A: CITIZEN VISA REGIMES & LABOR MOBILITY
+,Visa Regime Policy,Entry Fee / Visa ($),Monthly Border Crossers,Skilled Specialists Inflow,Tourism Revenue Index (%),Clearance Queue (min),Monthly State Visa Revenue ($),Smuggling / Illegal Rate (%),Economic & Labor Mobility Impact,Active Regime (1 = yes)
+,Visa-Free Regime (Open Peninsula),0.0,125000.0,2400.0,1.5,8.0,0,0.045,"Maximizes regional commerce, labor supply & tourism; zero friction",0.0
+,Paid Tourist & Business Visa,45.0,78000.0,1850.0,0.95,35.0,3510000,0.082,Generates massive fiscal revenue; slight deterrence to casual tourists,1.0
+,Skilled-Only Quota (Talent Filter),120.0,22000.0,3600.0,0.3,65.0,2640000,0.145,Shields local low-skill wages while importing engineers & scientists,0.0
+,Closed Border (Full Embargo / Lockdown),0.0,850.0,50.0,0.0,180.0,0,0.38,Total national isolation; severe economic contraction & illicit trade surge,0.0
+,Active Visa Regime (one regime applies at a time; select it in column K),45,78000,1850,0.95,35,3510000,0.082,Paid Tourist & Business Visa,OK
+,"BORDER HUB POLICY PART B: CARGO CUSTOMS TARIFFS, EXCISE, EMBARGO & SMUGGLING DYNAMICS"
+,Commodity Category / Trade Lane,Import Duty (%),Export Duty (%),Excise Tax (%),Embargo Active? (Toggle),Monthly Trade Volume ($),"Monthly Duty & Excise Revenue ($): legal share only, volume x (1 - smuggling rate)",Smuggling / Contraband Rate (%),Clearance Delay & Freight Market Dynamics,Import Share of Lane Volume
+,"Raw Materials & Bulk Minerals (Ore, Coal, Stone)",0.05,0.02,0.0,NO,1.25E7,417375,0.046,15 min queue • Low-friction bulk throughput for domestic factories,0.5
+,"Hydrocarbons & Energy (Gas, Oil, Fuel)",0.08,0.15,0.05,NO,2.8E7,3363360,0.142,30 min queue • Vital fiscal cash cow; pipeline automated metering,0.5
+,"Agricultural & Packaged Food (Grain, Food Rations)",0.03,0.04,0.0,NO,9200000.0,311535,0.0325,20 min queue • Protects citizen calorie security; minimal contraband,0.5
+,"Manufactured Capital & Tech (Machinery, Chips, Vehicles)",0.12,0.0,0.02,NO,2.24E7,1395520,0.11,45 min queue • High-value cargo scanning; stimulates local substitution,0.5
+,"High-Excise & Luxury Goods (Spirits, Luxury Electronics)",0.25,0.05,0.3,NO,1.4E7,2478000,0.41,75 min queue • High tax drive creates massive contraband smuggling pressure,0.5
+,Customs Hub Portfolio Total / Weighted Average,0.106,0.052,0.074,0 Embargoes Active,86100000,7965790,0.1481,37 min avg queue • Balanced Sovereign Fiscal Trade Regime,
+,Duties evaded by contraband ($/month),,,,,,2481710,Smuggled share of each lane pays no duty; smugglers keep part of it as shadow margin (GDD §65),
