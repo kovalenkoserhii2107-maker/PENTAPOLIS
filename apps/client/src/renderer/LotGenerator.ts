@@ -11,6 +11,7 @@ import {
   pickBuildingVisual,
   type BuildingDto,
   type MasterCatalogs,
+  type DistrictDto,
   type SectorId,
   type ZoneDto,
   type ZoneSiteStatusDto,
@@ -49,6 +50,9 @@ function createCrispFacadeTexture(wallHex: string, accentHex: string, floors: nu
   return tex;
 }
 
+/** District tiers 1..5 (sheet 25 Table 5): industrial outskirts (rust) -> elite enclave (gold). */
+const TIER_COLORS = [0x9a3412, 0xd97706, 0x65a30d, 0x0891b2, 0xfacc15];
+
 export class LotGenerator {
   public readonly group = new THREE.Group();
   private readonly cranes: { boom: THREE.Object3D; stalled: boolean }[] = [];
@@ -68,7 +72,9 @@ export class LotGenerator {
     zones: readonly ZoneDto[],
     catalogs: MasterCatalogs,
     selectedBuildingId: string | null,
-    zoneSites: ReadonlyMap<string, ZoneSiteStatusDto> = new Map()
+    zoneSites: ReadonlyMap<string, ZoneSiteStatusDto> = new Map(),
+    districts: ReadonlyMap<string, DistrictDto> = new Map(),
+    landValueOverlay = false
   ): void {
     while (this.group.children.length > 0) {
       const child = this.group.children.pop()!;
@@ -88,15 +94,19 @@ export class LotGenerator {
     // 1. Render RCI Zoned Lots & private developer subdivisions
     for (const z of zones) {
       const padGeo = new THREE.BoxGeometry(z.width, 0.08, z.depth);
-      const zoneColor = z.zoneKind.startsWith("RES-")
-        ? 0x16a34a
-        : z.zoneKind.startsWith("COM-")
-          ? 0x2563eb
-          : 0x9333ea;
+      const district = districts.get(z.id);
+      const zoneColor =
+        landValueOverlay && district
+          ? TIER_COLORS[district.tier - 1]!
+          : z.zoneKind.startsWith("RES-")
+            ? 0x16a34a
+            : z.zoneKind.startsWith("COM-")
+              ? 0x2563eb
+              : 0x9333ea;
       const padMat = new THREE.MeshLambertMaterial({
         color: zoneColor,
         transparent: true,
-        opacity: 0.35,
+        opacity: landValueOverlay ? 0.85 : 0.35,
       });
       const pad = new THREE.Mesh(padGeo, padMat);
       pad.position.set(z.x + z.width * 0.5, 0.06, z.y + z.depth * 0.5);
@@ -117,7 +127,7 @@ export class LotGenerator {
           idx += 1;
           const lotId = `${z.id}-${gx}-${gz}`;
           const vis = catEntry
-            ? pickBuildingVisual(lotId, catEntry, catalogs.visuals, z.sectorId, "M")
+            ? pickBuildingVisual(lotId, catEntry, catalogs.visuals, z.sectorId, district?.visualClass ?? "M")
             : null;
           const floors =
             z.zoneKind === "RES-03" || z.zoneKind === "OFF-02"

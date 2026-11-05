@@ -11,6 +11,13 @@
 import {
   BUS_LICENSE_FEE_PER_BUS_PER_MONTH_UNITS,
   CANONICAL_EMERGENCIES,
+  ON_SITE_HOURS,
+  UNATTENDED_DURATION_MULTIPLIER,
+  buildAdvisors,
+  computeCityServices,
+  planDispatch,
+  rollDailyEmergencies,
+  runAutoMarket,
   GAME_HOURS_PER_MONTH,
   MIN_ROAD_HEALTH_PERCENT,
   ROAD_SERVICE_RESTORE_PERCENT_PER_MONTH,
@@ -57,6 +64,11 @@ import {
   type NetworkSegmentDto,
   type PeninsulaMapData,
   type RoadServiceLevel,
+  type AdvisorDto,
+  type CityModelResult,
+  type EmergencySpawn,
+  type SectorAutoStatsDto,
+  type SectorFleetState,
   type SectorConstructionStatsDto,
   type ZoneSiteStatusDto,
   type SectorId,
@@ -144,6 +156,11 @@ export class WorldSimulation {
   private trafficDirty = true;
   private lastTacticalSlot = 0;
   private lastConstruction: { sectors: SectorConstructionStatsDto[]; zoneSites: ZoneSiteStatusDto[] } | null = null;
+  private city: CityModelResult | null = null;
+  private autoStats: SectorAutoStatsDto[] = [];
+  private readonly fleets = new Map<SectorId, SectorFleetState>(
+    SECTOR_IDS.map((sectorId) => [sectorId, { sectorId, fleet: [0, 0, 0, 0, 0] }])
+  );
 
   constructor(dbPath = ":memory:") {
     this.catalogs = getMasterCatalogs();
@@ -277,6 +294,11 @@ export class WorldSimulation {
       this.busRoutes.set(route.id, route);
     }
     for (const sectorId of SECTOR_IDS) {
+      const fleet = this.db.getMeta(`fleet:S${sectorId}`);
+      if (fleet) {
+        const parsed = JSON.parse(fleet) as number[];
+        if (parsed.length === 5) this.fleets.get(sectorId)!.fleet = parsed as SectorFleetState["fleet"];
+      }
       const saved = Number(this.db.getMeta(`roadService:S${sectorId}`) ?? "1");
       this.roadServiceLevel.set(sectorId, (saved === 0 || saved === 2 ? saved : 1) as RoadServiceLevel);
     }
@@ -364,6 +386,10 @@ export class WorldSimulation {
         alerts.push(alertText);
         this.pushSystemChat(alertText);
       }
+      for (const alert of this.stepGameDays(totalDaysNow - daysDelta + 1, daysDelta)) {
+        alerts.push(alert);
+        this.pushSystemChat(alert);
+      }
     }
 
     const totalMonthsNow = Math.floor(this.totalGameSeconds / (86_400 * 30)) + 1;
@@ -404,11 +430,18 @@ export class WorldSimulation {
       }
     }
 
-    // Expire resolved emergencies
+    // Close emergencies: responders resolve them, unattended ones leave damage
     for (let i = this.emergencies.length - 1; i >= 0; i--) {
-      if (this.emergencies[i]!.expiresAtGameSeconds <= this.totalGameSeconds) {
-        this.emergencies.splice(i, 1);
-      }
+      const emg = this.emergencies[i]!;
+      if (emg.expiresAtGameSeconds > this.totalGameSeconds) continue;
+      this.emergencies.splice(i, 1);
+      if (emg.emergencyId === "FROZEN_CONSTRUCTION" || emg.attended === undefined) continue;
+      this.trafficDirty = true;
+      const text = emg.attended
+        ? `✅ Сектор ${emg.sectorId}: службы ликвидировали ЧП «${emg.titleRu.split(":")[0]}»`
+        : this.applyEmergencyDamage(emg);
+      alerts.push(text);
+      this.pushSystemChat(text);
     }
 
     if (this.trafficDirty) this.recomputeTraffic();
@@ -513,6 +546,7 @@ export class WorldSimulation {
       zones: [...this.zones.values()],
       buildings: [...this.buildings.values()],
       hours,
+      districtHappiness: this.city ? new Map(this.city.districts.map((d) => [d.zoneId, d.happiness])) : undefined,
       sectors: SECTOR_IDS.map((sectorId) => {
         const reg = this.engine.getRegion(sectorId);
         return {
@@ -565,6 +599,153 @@ export class WorldSimulation {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Sprint 6: city services, emergencies & dispatch, car lifecycle, advisors
+  // ---------------------------------------------------------------------------------------------
+
+  private ensureCity(): CityModelResult {
+    this.ensureTraffic();
+    return this.city!;
+  }
+
+  /** Daily tick: car fleet flows and organic emergencies (one roll per elapsed day, last 30 at most). */
+  private stepGameDays(firstDay: number, days: number): string[] {
+    const alerts: string[] = [];
+    const city = this.ensureCity();
+    const transport = this.ensureTraffic().state.sectors;
+    const households = new Map<SectorId, number>();
+    const affluent = new Map<SectorId, number>();
+    const roads = new Map<SectorId, number>();
+    for (const c of city.sectors) {
+      households.set(c.sectorId, c.residents / 2.2);
+      affluent.set(c.sectorId, c.residents > 0 ? ((c.residentsByTier[3] ?? 0) + (c.residentsByTier[4] ?? 0)) / c.residents : 0);
+    }
+    for (const t of transport) roads.set(t.sectorId, t.avgRoadHealth);
+    this.autoStats = runAutoMarket({
+      catalogs: this.catalogs,
+      fleets: [...this.fleets.values()],
+      buildings: [...this.buildings.values()],
+      households,
+      affluentShare: affluent,
+      avgRoadHealth: roads,
+      months: days / 30,
+    });
+    for (const f of this.fleets.values()) {
+      this.db.setMeta(`fleet:S${f.sectorId}`, JSON.stringify(f.fleet.map((v) => Number(v.toFixed(3)))));
+    }
+
+    for (let day = Math.max(firstDay, firstDay + days - 30); day < firstDay + days; day++) {
+      const spawns = rollDailyEmergencies({
+        catalogs: this.catalogs,
+        worldId: this.worldId,
+        gameDay: day,
+        sectors: SECTOR_IDS.filter((s) => this.occupiedBySector.get(s)).map((sectorId) => {
+          const reg = this.engine.getRegion(sectorId);
+          const power = this.computeSectorPower(sectorId);
+          return {
+            sectorId,
+            activeDecreeIds: [...reg.levers.activeDecreeIds],
+            hardshipShare: reg.hardshipShare,
+            annualInflation: reg.lastReport?.annualInflation ?? 0.03,
+            powerDeficit: power.supplyMw < power.demandMw,
+          };
+        }),
+        buildings: [...this.buildings.values()],
+        zones: [...this.zones.values()],
+        segments: [...this.segments.values()],
+        districts: city.districts,
+        active: this.emergencies,
+      });
+      for (const sp of spawns) alerts.push(this.spawnEmergency(sp));
+    }
+    return alerts;
+  }
+
+  /** Opens an emergency and dispatches the nearest responders over the road network. */
+  private spawnEmergency(sp: EmergencySpawn): string {
+    const spec = CANONICAL_EMERGENCIES.find((e) => e.id === sp.emergencyId)!;
+    const responders = planDispatch({
+      catalogs: this.catalogs,
+      emergencyId: sp.emergencyId,
+      sectorId: sp.sectorId,
+      tileX: sp.tileX,
+      tileY: sp.tileY,
+      buildings: [...this.buildings.values()],
+      segments: [...this.segments.values()],
+    });
+    const attended = responders.length > 0;
+    const onSite = ON_SITE_HOURS[sp.emergencyId] ?? 2;
+    const eta = attended ? Math.max(...responders.map((r) => r.etaHours)) : 0;
+    const durationHours = attended ? eta + onSite : onSite * UNATTENDED_DURATION_MULTIPLIER;
+    const emg: ActiveEmergencyDto = {
+      instanceId: this.nextId("emg"),
+      emergencyId: sp.emergencyId,
+      sectorId: sp.sectorId,
+      tileX: sp.tileX,
+      tileY: sp.tileY,
+      titleRu: `${spec.nameRu}: ${spec.impactSummaryRu}`,
+      expiresAtGameSeconds: this.totalGameSeconds + Math.round(durationHours * 3600),
+      causeRu: sp.causeRu,
+      targetRef: sp.targetRef,
+      attended,
+      responders: responders.map((r) => ({
+        buildingId: r.buildingId,
+        vehicleTypeId: r.vehicleTypeId,
+        arrivesAtGameSeconds: this.totalGameSeconds + Math.round(r.etaHours * 3600),
+        path: r.path,
+      })),
+    };
+    this.emergencies.push(emg);
+    this.trafficDirty = true;
+    const crew = attended
+      ? `выехала бригада (${responders.map((r) => this.catalogs.vehiclesById.get(r.vehicleTypeId)?.nameRu ?? r.vehicleTypeId).join(", ")}), прибытие через ${Math.max(1, Math.round(eta * 60))} мин`
+      : spec.responderBuildingId
+        ? `нет службы ${spec.responderBuildingId} рядом — ЧП затянется`
+        : "служба не требуется";
+    return `🚨 Сектор ${sp.sectorId}: ${spec.nameRu} (${sp.causeRu}) — ${crew}`;
+  }
+
+  private applyEmergencyDamage(emg: ActiveEmergencyDto): string {
+    const name = emg.titleRu.split(":")[0];
+    const ref = emg.targetRef ?? "";
+    if (emg.emergencyId === "FIRE") {
+      const b = this.buildings.get(ref);
+      if (b && b.level > 1) {
+        const updated: BuildingDto = { ...b, level: b.level - 1 };
+        this.buildings.set(b.id, updated);
+        this.db.upsertBuilding(updated);
+        return `🔥 Сектор ${emg.sectorId}: пожар без пожарных — «${this.catalogs.buildingsById.get(b.catalogId)?.nameRu ?? b.catalogId}» потерял уровень (Ур.${updated.level})`;
+      }
+      const z = this.zones.get(ref);
+      if (z) {
+        const updated: ZoneDto = { ...z, occupancyRatio: Math.max(0, Number((z.occupancyRatio - 0.25).toFixed(4))) };
+        this.zones.set(z.id, updated);
+        this.db.upsertZone(updated);
+        return `🔥 Сектор ${emg.sectorId}: пожар выжег четверть квартала ${z.zoneKind} #${z.id}`;
+      }
+    }
+    if (emg.emergencyId === "ROAD_CRASH") {
+      const seg = this.segments.get(ref);
+      if (seg) {
+        const updated: NetworkSegmentDto = { ...seg, healthPercent: Math.max(MIN_ROAD_HEALTH_PERCENT, seg.healthPercent - 15) };
+        this.segments.set(seg.id, updated);
+        this.db.upsertSegment(updated);
+        return `🚧 Сектор ${emg.sectorId}: ДТП без полиции — дорога ${seg.id} разбита ещё сильнее (${updated.healthPercent.toFixed(0)}%)`;
+      }
+    }
+    return `⚠️ Сектор ${emg.sectorId}: ЧП «${name}» закончилось само, без помощи служб`;
+  }
+
+  private emergencyStatusRu(emg: ActiveEmergencyDto): string | undefined {
+    if (emg.attended === undefined) return undefined;
+    if (!emg.attended) return "Службы нет рядом — ЧП длится втрое дольше";
+    const arrival = Math.max(...(emg.responders ?? []).map((r) => r.arrivesAtGameSeconds));
+    if (arrival > this.totalGameSeconds) {
+      return `Бригада в пути: ${Math.max(1, Math.round((arrival - this.totalGameSeconds) / 60))} игр. мин`;
+    }
+    return `Работы на месте: ещё ${Math.max(1, Math.round((emg.expiresAtGameSeconds - this.totalGameSeconds) / 60))} игр. мин`;
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Sprint 5: live traffic, public transport & agent inspector
   // ---------------------------------------------------------------------------------------------
 
@@ -589,6 +770,29 @@ export class WorldSimulation {
       }),
       gameHourOfDay: cal.economicHourOfDay,
       version: this.trafficVersion,
+      dispatches: this.emergencies.flatMap((e) =>
+        (e.responders ?? []).map((r) => ({
+          emergencyInstanceId: e.instanceId,
+          emergencyTitleRu: e.titleRu.split(":")[0]!,
+          sectorId: e.sectorId,
+          vehicleTypeId: r.vehicleTypeId,
+          buildingId: r.buildingId,
+          tileX: e.tileX,
+          tileY: e.tileY,
+        }))
+      ),
+    });
+    this.city = computeCityServices({
+      catalogs: this.catalogs,
+      zones: [...this.zones.values()],
+      buildings: [...this.buildings.values()],
+      emergencies: this.emergencies,
+      metroZoneIds: this.traffic.metroZoneIds,
+      busZoneIds: this.traffic.busZoneIds,
+      sectors: SECTOR_IDS.map((sectorId) => {
+        const reg = this.engine.getRegion(sectorId);
+        return { sectorId, activeDecreeIds: [...reg.levers.activeDecreeIds], hardshipShare: reg.hardshipShare };
+      }),
     });
     this.trafficDirty = false;
     return this.traffic;
@@ -640,7 +844,8 @@ export class WorldSimulation {
   public getCitizenDossier(citizenId: string): CitizenDossierDto | null {
     const ctx = this.ensureTraffic().citizens.get(citizenId);
     if (!ctx) return null;
-    return buildCitizenDossier(ctx, this.dossierRegionInput(ctx.sectorId));
+    const homeDistrict = ctx.homeZoneId ? this.ensureCity().districts.find((d) => d.zoneId === ctx.homeZoneId) : undefined;
+    return buildCitizenDossier(ctx, { ...this.dossierRegionInput(ctx.sectorId), homeDistrict });
   }
 
   public executeCommand(cmd: ClientCommand): CommandOutcome {
@@ -930,6 +1135,11 @@ export class WorldSimulation {
     }
     this.roadServiceLevel.set(sectorId, 1);
     this.db.setMeta(`roadService:S${sectorId}`, "1");
+    for (let i = this.emergencies.length - 1; i >= 0; i--) {
+      if (this.emergencies[i]!.sectorId === sectorId) this.emergencies.splice(i, 1);
+    }
+    this.fleets.get(sectorId)!.fleet = [0, 0, 0, 0, 0];
+    this.db.setMeta(`fleet:S${sectorId}`, "[0,0,0,0,0]");
     reg.factories.length = 0;
     this.lastConstruction = null;
     this.db.deleteSectorEntities(sectorId);
@@ -1530,22 +1740,24 @@ export class WorldSimulation {
     const spec = CANONICAL_EMERGENCIES.find((e) => e.id === emergencyId);
     if (!spec) return { ok: false, message: `Неизвестное ЧП: ${emergencyId}` };
 
+    // Strike the sector's own city when it has one, otherwise its profile deposit
+    const target =
+      [...this.buildings.values()].find((b) => b.sectorId === sectorId && b.constructionProgress >= 1) ??
+      undefined;
     const deposit = this.map.deposits.find((d) => d.sectorId === sectorId);
-    const tileX = deposit ? deposit.tileX + 6 : 500;
-    const tileY = deposit ? deposit.tileY + 6 : 500;
+    const tileX = target ? Math.round(target.tileX + target.width / 2) : deposit ? deposit.tileX + 6 : 500;
+    const tileY = target ? Math.round(target.tileY + target.depth / 2) : deposit ? deposit.tileY + 6 : 500;
 
-    const emg: ActiveEmergencyDto = {
-      instanceId: this.nextId("emg"),
+    const text = this.spawnEmergency({
       emergencyId,
       sectorId,
       tileX,
       tileY,
-      titleRu: `${spec.nameRu}: ${spec.impactSummaryRu}`,
-      expiresAtGameSeconds: this.totalGameSeconds + 3600 * 6,
-    };
-    this.emergencies.push(emg);
-    this.pushSystemChat(`🚨 ЧП в Секторе ${sectorId}: ${spec.nameRu}!`);
-    return { ok: true, message: `Запущено ЧП «${spec.nameRu}» в Секторе ${sectorId}` };
+      targetRef: target?.id ?? null,
+      causeRu: "запущено из Бог-режима",
+    });
+    this.pushSystemChat(text);
+    return { ok: true, message: text };
   }
 
   private computeSectorStage(households: number): string {
@@ -1585,6 +1797,7 @@ export class WorldSimulation {
 
   public getSnapshot(): WorldSnapshotDto {
     const traffic = this.ensureTraffic();
+    const city = this.ensureCity();
     const construction = this.constructionSnapshot();
     const cal = computeDualCalendar(this.totalGameSeconds, this.catalogs.unitsAndTime.timeBase);
     const seasonDay = Math.min(30, Math.floor(this.totalGameSeconds / 86_400) + 1);
@@ -1608,7 +1821,10 @@ export class WorldSimulation {
         megaprojectEquityShare: megaCount > 0 ? 0.2 : 0,
         households,
         happinessIndex: reg.happinessIndex,
-        avgLandValueUnits: 120_000 + sectorBuildings.length * 4_500,
+        // Sheet 25 Table 5 real-estate value per tile = 250 x GDD land value ($120..$6,000)
+        avgLandValueUnits:
+          (city.sectors.find((c) => c.sectorId === sectorId)?.avgLandValuePerTile ?? 0) * 250 ||
+          120_000 + sectorBuildings.length * 4_500,
         freightAndTransitVolumeTons:
           25_000 + this.segments.size * 1_200 + (traffic.state.sectors.find((t) => t.sectorId === sectorId)?.truckTripsPerHour ?? 0) * 720 * 25,
         tier3And4OutputInWcu: (tier34Count + 1) * 15_000_000,
@@ -1703,14 +1919,40 @@ export class WorldSimulation {
       segments: [...this.segments.values()],
       buildings: [...this.buildings.values()],
       zones: [...this.zones.values()],
-      emergencies: [...this.emergencies],
+      emergencies: this.emergencies.map((e) => ({ ...e, statusRu: this.emergencyStatusRu(e) })),
       recentChat: [...this.recentChat],
       trafficVersion: this.trafficVersion,
       busRoutes: [...this.busRoutes.values()],
       transport: traffic.state.sectors,
       construction: construction.sectors,
       zoneSites: construction.zoneSites,
+      districts: city.districts,
+      city: city.sectors,
+      autos: this.autoStats,
+      advisors: sectors.map((sector) => ({
+        sectorId: sector.sectorId,
+        advisors: this.advisorsFor(sector, traffic, construction, city),
+      })),
     };
+  }
+
+  private advisorsFor(
+    sector: SectorSummaryDto,
+    traffic: TrafficComputation,
+    construction: { sectors: SectorConstructionStatsDto[] },
+    city: CityModelResult
+  ): AdvisorDto[] {
+    const sid = sector.sectorId;
+    return buildAdvisors({
+      sector,
+      city: city.sectors.find((c) => c.sectorId === sid),
+      transport: traffic.state.sectors.find((t) => t.sectorId === sid),
+      construction: construction.sectors.find((c) => c.sectorId === sid),
+      autos: this.autoStats.find((a) => a.sectorId === sid),
+      emergencies: this.emergencies.filter((e) => e.sectorId === sid),
+      hasBuilding: (catalogId) =>
+        [...this.buildings.values()].some((b) => b.sectorId === sid && b.catalogId === catalogId),
+    });
   }
 
   public close(): void {

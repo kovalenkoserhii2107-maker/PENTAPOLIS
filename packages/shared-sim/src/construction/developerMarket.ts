@@ -151,6 +151,13 @@ export interface DeveloperMarketInput {
   readonly buildings: readonly BuildingDto[];
   readonly sectors: readonly DeveloperSectorInput[];
   readonly hours: number;
+  /** Per-zone district happiness 0..100 (Sprint 6); overrides the sector happiness when present. */
+  readonly districtHappiness?: ReadonlyMap<string, number>;
+}
+
+/** GDD §6.7: arrivals scale with (H / 70)²; developers follow demand. */
+export function districtDemandFactor(happiness: number): number {
+  return Math.max(0.2, Math.min(1.3, (happiness / 70) ** 2));
 }
 
 export interface ZoneGrowthResult {
@@ -207,9 +214,11 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
     const growthFactor = sec.happinessIndex >= 50 ? 1 : LOW_HAPPINESS_GROWTH_FACTOR;
     const desired = sectorZones.map((z) => {
       const spec = specs.get(z.zoneKind);
+      const districtH = input.districtHappiness?.get(z.id);
+      const zoneFactor = districtH === undefined ? growthFactor : districtDemandFactor(districtH);
       const entry = catalogs.buildingsById.get(z.zoneKind);
       const buildHours = Math.max(1, entry?.buildTimeGameHours ?? 48);
-      const dOcc = Math.min(1 - z.occupancyRatio, (DEVELOPER_PARALLEL_CREWS / buildHours) * hours * growthFactor);
+      const dOcc = Math.min(1 - z.occupancyRatio, (DEVELOPER_PARALLEL_CREWS / buildHours) * hours * zoneFactor);
       const tiles = z.width * z.depth;
       const demand = new Map<ConstructionMaterial, number>();
       for (const m of CONSTRUCTION_MATERIALS) {

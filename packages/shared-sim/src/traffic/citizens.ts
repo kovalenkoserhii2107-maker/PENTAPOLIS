@@ -12,6 +12,7 @@ import type { HouseholdClassState } from "../economy/RegionalMoneyEngine.ts";
 import { money, mulRate, type Money } from "../money/money.ts";
 import type {
   CitizenDossierDto,
+  DistrictDto,
   CitizenThoughtDto,
   DossierLineDto,
   VehicleInspectorDto,
@@ -31,6 +32,8 @@ export interface DossierRegionInput {
   readonly activeDecreeIds: readonly string[];
   readonly powerDeficit: boolean;
   readonly currencySymbol: string;
+  /** The citizen's home district (Sprint 6): crime, ecology, services, prestige. */
+  readonly homeDistrict?: DistrictDto;
 }
 
 const CLASS_NAMES_RU: Readonly<Record<CitizenContext["classId"], string>> = {
@@ -138,6 +141,15 @@ export function buildCitizenDossier(ctx: CitizenContext, region: DossierRegionIn
   if (region.activeDecreeIds.includes("GAS_SUBSIDY")) thoughts.push({ text: "Доволен газовым отоплением", delta: 10 });
   if (region.activeDecreeIds.includes("FREE_TRANSIT") && (ctx.busCovered || ctx.metroCovered)) {
     thoughts.push({ text: "Бесплатный проезд экономит деньги", delta: 6 });
+  }
+  const district = region.homeDistrict;
+  if (district) {
+    if (district.crimeRate > 0.15) thoughts.push({ text: "Страшно выходить вечером — полиции не видно", delta: -8 });
+    if (district.ecology < 0.4) thoughts.push({ text: "Дышать нечем из-за заводского дыма", delta: -10 });
+    if (district.coverage.health < 0.3) thoughts.push({ text: "Далеко до поликлиники", delta: -6 });
+    if (kids > 0 && district.coverage.kindergarten < 0.3) thoughts.push({ text: "Нет мест в детсаду — жена сидит дома", delta: -7 });
+    if (district.coverage.park > 0.5) thoughts.push({ text: "Парк рядом с домом", delta: 5 });
+    if (district.tier >= 4) thoughts.push({ text: `Живу в престижном районе (${district.tierNameRu})`, delta: 6 });
   }
   if (net < 0n) thoughts.push({ text: "Не хватает до зарплаты, проедаю сбережения", delta: -15 });
   else if (savingsRate > 0.1) thoughts.push({ text: "Удаётся откладывать каждый месяц", delta: 6 });
