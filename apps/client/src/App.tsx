@@ -29,6 +29,8 @@ import { AdminGodModeTray } from "./components/AdminGodModeTray.tsx";
 import { TransportPanel } from "./components/TransportPanel.tsx";
 import { AgentInspectorPanel } from "./components/AgentInspectorPanel.tsx";
 import { CityPanel } from "./components/CityPanel.tsx";
+import { BorderPostPanel } from "./components/BorderPostPanel.tsx";
+import { GeopoliticsPanel } from "./components/GeopoliticsPanel.tsx";
 
 interface MapMetaResponse {
   readonly width: number;
@@ -67,6 +69,7 @@ export const App: React.FC = () => {
   const [showTransport, setShowTransport] = useState(false);
   const [undergroundView, setUndergroundView] = useState(false);
   const [showCity, setShowCity] = useState(false);
+  const [showGeo, setShowGeo] = useState(false);
   const [landValueOverlay, setLandValueOverlay] = useState(false);
 
   const activeSectorRef = useRef<SectorId>(activeSectorId);
@@ -356,12 +359,14 @@ export const App: React.FC = () => {
             onToggleTransport={() => setShowTransport((v) => !v)}
             cityOpen={showCity}
             onToggleCity={() => setShowCity((v) => !v)}
+            geoOpen={showGeo}
+            onToggleGeo={() => setShowGeo((v) => !v)}
           />
         </div>
       )}
 
       {/* Right Column: Vehicle -> Citizen Inspector & Transport Office (Sprint 5) */}
-      {snapshot && (selectedVehicleId || showTransport || showCity) && (
+      {snapshot && (selectedVehicleId || showTransport || showCity || showGeo || selectedBuilding?.catalogId === "LOG-07") && (
         <div className="pointer-events-auto fixed right-3 top-14 z-30 w-80 max-h-[calc(100vh-8rem)] overflow-y-auto flex flex-col gap-2">
           {selectedVehicleId && (
             <AgentInspectorPanel
@@ -374,6 +379,25 @@ export const App: React.FC = () => {
                 setUndergroundView(false);
                 sceneRef.current?.focusTile(x, y, 6);
               }}
+            />
+          )}
+          {selectedBuilding?.catalogId === "LOG-07" && (
+            <BorderPostPanel
+              key={`${selectedBuilding.id}-${activeSectorId}`}
+              snapshot={snapshot}
+              postId={selectedBuilding.id}
+              activeSectorId={activeSectorId}
+              onSendCommand={(cmd) => void sendCommand(cmd)}
+              onClose={() => setSelectedBuildingId(null)}
+            />
+          )}
+          {showGeo && (
+            <GeopoliticsPanel
+              snapshot={snapshot}
+              activeSectorId={activeSectorId}
+              onSendCommand={(cmd) => void sendCommand(cmd)}
+              onFocusTile={(x, y) => sceneRef.current?.focusTile(x, y, 3)}
+              onClose={() => setShowGeo(false)}
             />
           )}
           {showCity && (

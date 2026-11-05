@@ -215,6 +215,8 @@ export interface CityModelInput {
   readonly metroZoneIds?: ReadonlySet<string>;
   /** Zones within a licensed bus stop's radius. */
   readonly busZoneIds?: ReadonlySet<string>;
+  /** Emission multiplier per building (Sprint 7: gasified plants burn cleaner). */
+  readonly pollutionMultiplier?: ReadonlyMap<string, number>;
 }
 
 export interface CityModelResult {
@@ -337,7 +339,7 @@ export function computeCityServices(input: CityModelInput): CityModelResult {
       let pollution = 1 - BASE_ECOLOGY;
       for (const b of operational) {
         const entry = catalogs.buildingsById.get(b.catalogId);
-        const p = entry?.pollution ?? 0;
+        const p = (entry?.pollution ?? 0) * (input.pollutionMultiplier?.get(b.id) ?? 1);
         if (p <= 0) continue;
         const plume = PLUME_RADIUS_BASE + PLUME_RADIUS_PER_POINT * p;
         // Smoke spreads from the plant's whole footprint, not just its centre

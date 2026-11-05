@@ -153,6 +153,18 @@ export interface DeveloperMarketInput {
   readonly hours: number;
   /** Per-zone district happiness 0..100 (Sprint 6); overrides the sector happiness when present. */
   readonly districtHappiness?: ReadonlyMap<string, number>;
+  /** Output multiplier of gasified plants (Sprint 7). */
+  readonly plantOutputMultiplier?: ReadonlyMap<string, number>;
+  /** Buyer/seller pairs linked by an open border post (Sprint 7). */
+  readonly tradePartners?: readonly MaterialTradePartner[];
+}
+
+export interface MaterialTradePartner {
+  readonly buyer: SectorId;
+  readonly seller: SectorId;
+  readonly allowed: (material: ConstructionMaterial) => boolean;
+  readonly importDuty: (material: ConstructionMaterial) => number;
+  readonly exportDuty: (material: ConstructionMaterial) => number;
 }
 
 /** GDD §6.7: arrivals scale with (H / 70)²; developers follow demand. */
@@ -173,7 +185,7 @@ export interface ZoneGrowthResult {
 export interface DeveloperMarketResult {
   readonly zones: readonly ZoneGrowthResult[];
   readonly sectors: readonly SectorConstructionStatsDto[];
-  /** Import duty collected by each sector's treasury over the step (local minor units). */
+  /** Customs duty (gateway imports, border imports and exports) collected by each treasury over the step (local minor units). */
   readonly importDutyBySector: ReadonlyMap<SectorId, Money>;
 }
 
@@ -184,8 +196,9 @@ function materialPricePerTonWcu(catalogs: MasterCatalogs, m: ConstructionMateria
 }
 
 /**
- * Advances developer construction on every zone by `hours` game hours, buying materials from local
- * plants first and imports second. Pure and deterministic.
+ * Advances developer construction on every zone by `hours` game hours. Materials come from the
+ * sector's own plants first, then a neighbour's spare output through open border posts (Sprint 7,
+ * GDD §4.4 priority 2), then External World imports through the gateway. Pure and deterministic.
  */
 export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarketResult {
   const { catalogs } = input;
@@ -194,12 +207,13 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
   const zoneResults: ZoneGrowthResult[] = [];
   const sectorStats: SectorConstructionStatsDto[] = [];
   const dutyBySector = new Map<SectorId, Money>();
+  const addDuty = (sid: SectorId, v: Money) => dutyBySector.set(sid, (dutyBySector.get(sid) ?? 0n) + v);
+  const zeroMap = () => new Map<ConstructionMaterial, number>(CONSTRUCTION_MATERIALS.map((m) => [m, 0]));
+  const fxOf = new Map(input.sectors.map((s) => [s.sectorId, s.fxRatePerWcu]));
 
-  for (const sec of input.sectors) {
-    const sectorZones = input.zones.filter((z) => z.sectorId === sec.sectorId);
-
-    // Local supply: tons per hour from the sector's own operational plants
-    const localTph = new Map<ConstructionMaterial, number>(CONSTRUCTION_MATERIALS.map((m) => [m, 0]));
+  // Pass 1: local supply, desired construction and what the sector's own plants cover
+  const plans = input.sectors.map((sec) => {
+    const localTph = zeroMap();
     for (const b of input.buildings) {
       if (b.sectorId !== sec.sectorId || b.constructionProgress < 1 || b.stalledAwaitingPrivate) continue;
       const m = CONSTRUCTION_MATERIALS.find((mat) => PLANT_FOR_MATERIAL[mat] === b.catalogId);
@@ -207,50 +221,74 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
       const entry = catalogs.buildingsById.get(b.catalogId);
       if (!entry) continue;
       const stats = computeBuildingAtLevel(entry, catalogs.levelCurves, b.level);
-      localTph.set(m, localTph.get(m)! + stats.capacity * commodityUnitTons(entry.capacityUnit));
+      const gas = input.plantOutputMultiplier?.get(b.id) ?? 1;
+      localTph.set(m, localTph.get(m)! + stats.capacity * commodityUnitTons(entry.capacityUnit) * gas);
     }
 
-    // Desired construction this step per zone (occupancy share) and its material demand
     const growthFactor = sec.happinessIndex >= 50 ? 1 : LOW_HAPPINESS_GROWTH_FACTOR;
-    const desired = sectorZones.map((z) => {
-      const spec = specs.get(z.zoneKind);
-      const districtH = input.districtHappiness?.get(z.id);
-      const zoneFactor = districtH === undefined ? growthFactor : districtDemandFactor(districtH);
-      const entry = catalogs.buildingsById.get(z.zoneKind);
-      const buildHours = Math.max(1, entry?.buildTimeGameHours ?? 48);
-      const dOcc = Math.min(1 - z.occupancyRatio, (DEVELOPER_PARALLEL_CREWS / buildHours) * hours * zoneFactor);
-      const tiles = z.width * z.depth;
-      const demand = new Map<ConstructionMaterial, number>();
-      for (const m of CONSTRUCTION_MATERIALS) {
-        demand.set(m, Math.max(0, dOcc) * tiles * (spec?.tonsPerTile[m] ?? 0));
-      }
-      return { z, dOcc: Math.max(0, dOcc), tiles, demand };
-    });
+    const desired = input.zones
+      .filter((z) => z.sectorId === sec.sectorId)
+      .map((z) => {
+        const spec = specs.get(z.zoneKind);
+        const districtH = input.districtHappiness?.get(z.id);
+        const zoneFactor = districtH === undefined ? growthFactor : districtDemandFactor(districtH);
+        const entry = catalogs.buildingsById.get(z.zoneKind);
+        const buildHours = Math.max(1, entry?.buildTimeGameHours ?? 48);
+        const dOcc = Math.max(0, Math.min(1 - z.occupancyRatio, (DEVELOPER_PARALLEL_CREWS / buildHours) * hours * zoneFactor));
+        const tiles = z.width * z.depth;
+        const demand = new Map<ConstructionMaterial, number>();
+        for (const m of CONSTRUCTION_MATERIALS) demand.set(m, dOcc * tiles * (spec?.tonsPerTile[m] ?? 0));
+        return { z, dOcc, tiles, demand };
+      });
 
     const totalDemand = new Map<ConstructionMaterial, number>(
       CONSTRUCTION_MATERIALS.map((m) => [m, desired.reduce((s, d) => s + d.demand.get(m)!, 0)])
     );
-
-    // Allocate: local first, then gateway imports sharing one tonnage cap across materials
-    const localAlloc = new Map<ConstructionMaterial, number>();
-    const residual = new Map<ConstructionMaterial, number>();
+    const localAlloc = zeroMap();
+    const residual = zeroMap();
+    const surplus = zeroMap();
     for (const m of CONSTRUCTION_MATERIALS) {
       const local = Math.min(totalDemand.get(m)!, localTph.get(m)! * hours);
       localAlloc.set(m, local);
       residual.set(m, totalDemand.get(m)! - local);
+      surplus.set(m, localTph.get(m)! * hours - local);
     }
+    return { sec, localTph, desired, totalDemand, localAlloc, residual, surplus, neighborAlloc: zeroMap() };
+  });
+  const planOf = new Map(plans.map((p) => [p.sec.sectorId, p]));
+
+  // Pass 2: neighbours' spare output across open border posts, with duties on both sides
+  for (const partner of input.tradePartners ?? []) {
+    const buyer = planOf.get(partner.buyer);
+    const seller = planOf.get(partner.seller);
+    if (!buyer || !seller) continue;
+    for (const m of CONSTRUCTION_MATERIALS) {
+      if (!partner.allowed(m)) continue;
+      const take = Math.min(buyer.residual.get(m)!, seller.surplus.get(m)!);
+      if (take <= 0) continue;
+      buyer.residual.set(m, buyer.residual.get(m)! - take);
+      buyer.neighborAlloc.set(m, buyer.neighborAlloc.get(m)! + take);
+      seller.surplus.set(m, seller.surplus.get(m)! - take);
+      const priceWcu = materialPricePerTonWcu(catalogs, m);
+      addDuty(partner.buyer, mulRate(mulRate(priceWcu, (fxOf.get(partner.buyer) ?? 1) * partner.importDuty(m)), take));
+      addDuty(partner.seller, mulRate(mulRate(priceWcu, (fxOf.get(partner.seller) ?? 1) * partner.exportDuty(m)), take));
+    }
+  }
+
+  // Pass 3: gateway imports share one tonnage cap; each site advances as far as its scarcest material allows
+  for (const plan of plans) {
+    const { sec, desired, totalDemand, localAlloc, neighborAlloc, residual, localTph } = plan;
     const importCap = sec.gatewayConnected ? STARTER_GATEWAY_IMPORT_TONS_PER_HOUR * hours : 0;
     const residualTotal = CONSTRUCTION_MATERIALS.reduce((s, m) => s + residual.get(m)!, 0);
     const importShare = residualTotal > 0 ? Math.min(1, importCap / residualTotal) : 1;
     const fill = new Map<ConstructionMaterial, number>();
     for (const m of CONSTRUCTION_MATERIALS) {
       const demand = totalDemand.get(m)!;
-      const supplied = localAlloc.get(m)! + residual.get(m)! * importShare;
+      const supplied = localAlloc.get(m)! + neighborAlloc.get(m)! + residual.get(m)! * importShare;
       fill.set(m, demand > 0 ? Math.min(1, supplied / demand) : 1);
     }
 
-    // Each site advances as far as its scarcest material allows
-    const consumed = new Map<ConstructionMaterial, number>(CONSTRUCTION_MATERIALS.map((m) => [m, 0]));
+    const consumed = zeroMap();
     let activeSites = 0;
     let stalledSites = 0;
     for (const d of desired) {
@@ -280,19 +318,20 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
       });
     }
 
-    // Report rates and settle import duty on what was actually imported
-    let duty = 0n;
+    // Report rates; gateway duty on what was actually imported (local, then neighbour, then import)
+    let gatewayDuty = 0n;
     let demandTph = 0;
     let suppliedTph = 0;
     const perHour = (t: number) => (hours > 0 ? t / hours : 0);
     const materials = CONSTRUCTION_MATERIALS.map((m) => {
       const used = consumed.get(m)!;
       const local = Math.min(used, localAlloc.get(m)!);
-      const imported = Math.max(0, used - local);
+      const neighbor = Math.min(used - local, neighborAlloc.get(m)!);
+      const imported = Math.max(0, used - local - neighbor);
       const priceWcu = materialPricePerTonWcu(catalogs, m);
       const localPrice = mulRate(priceWcu, sec.fxRatePerWcu);
       const importPrice = mulRate(localPrice, (1 + IMPORT_FREIGHT_PREMIUM) * (1 + sec.importDutyRate));
-      duty += mulRate(mulRate(localPrice, sec.importDutyRate), imported);
+      gatewayDuty += mulRate(mulRate(localPrice, sec.importDutyRate), imported);
       demandTph += perHour(totalDemand.get(m)!);
       suppliedTph += perHour(used);
       return {
@@ -300,6 +339,7 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
         nameRu: MATERIAL_NAMES_RU[m],
         demandTonsPerHour: Number(perHour(totalDemand.get(m)!).toFixed(2)),
         localTonsPerHour: Number(perHour(local).toFixed(2)),
+        neighborTonsPerHour: Number(perHour(neighbor).toFixed(2)),
         importedTonsPerHour: Number(perHour(imported).toFixed(2)),
         localCapacityTonsPerHour: Number(localTph.get(m)!.toFixed(2)),
         shortfallTonsPerHour: Number(Math.max(0, perHour(totalDemand.get(m)! - used)).toFixed(2)),
@@ -307,7 +347,7 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
         importPricePerTonMinor: importPrice.toString(),
       };
     });
-    dutyBySector.set(sec.sectorId, duty);
+    addDuty(sec.sectorId, gatewayDuty);
 
     sectorStats.push({
       sectorId: sec.sectorId,
@@ -318,7 +358,7 @@ export function runDeveloperMarket(input: DeveloperMarketInput): DeveloperMarket
       activeSites,
       stalledSites,
       materials,
-      importDutyMinor: duty.toString(),
+      importDutyMinor: (dutyBySector.get(sec.sectorId) ?? 0n).toString(),
     });
   }
 

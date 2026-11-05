@@ -15,7 +15,23 @@ import {
   trackSpeedLimitKmh,
 } from "./roadPhysics.ts";
 
-export type GraphLayer = "road" | "rail" | "metro";
+export type GraphLayer = "road" | "rail" | "metro" | "pipeline" | "power";
+
+/**
+ * A connector between two network ends that are not on one straight segment, e.g. the two
+ * sides of a border post (Sprint 7). It joins the nearest graph nodes to both points.
+ */
+export interface GraphLink {
+  readonly id: string;
+  readonly ax: number;
+  readonly ay: number;
+  readonly bx: number;
+  readonly by: number;
+  /** Max tiles from each point to the node it attaches to. */
+  readonly snapTiles: number;
+  /** Extra travel time through the link (customs clearance), hours. */
+  readonly delayHours?: number;
+}
 
 export interface GraphSegmentInput {
   readonly id: string;
@@ -43,6 +59,10 @@ export interface GraphEdge {
   readonly lengthTiles: number;
   readonly speedLimitKmh: number;
   readonly healthPercent: number;
+  /** Fixed extra hours on top of driving (border clearance). */
+  readonly delayHours?: number;
+  /** Set when the edge is a cross-border link rather than a built segment. */
+  readonly linkId?: string;
 }
 
 export interface NetworkGraph {
@@ -73,6 +93,8 @@ export function layerOfKind(kind: NetworkKind): GraphLayer | null {
   if (isRoadKind(kind)) return "road";
   if (kind === "rail") return "rail";
   if (kind === "metro_tunnel") return "metro";
+  if (kind === "pipeline") return "pipeline";
+  if (kind === "hv_power") return "power";
   return null;
 }
 
@@ -94,7 +116,8 @@ const tileKey = (x: number, y: number): number => y * 4096 + x;
 /** Builds the graph of one layer (`road`, `rail` or `metro`) from placed network segments. */
 export function buildNetworkGraph(
   segments: readonly GraphSegmentInput[],
-  layer: GraphLayer
+  layer: GraphLayer,
+  links: readonly GraphLink[] = []
 ): NetworkGraph {
   const layerSegs = segments
     .filter((s) => layerOfKind(s.kind) === layer)
@@ -166,6 +189,42 @@ export function buildNetworkGraph(
     }
   });
 
+  // Cross-border links join the nearest nodes on each side
+  const nearestNode = (x: number, y: number, maxD: number): number => {
+    let best = -1;
+    let bestD = maxD;
+    for (const n of nodes) {
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d <= bestD) {
+        bestD = d;
+        best = n.id;
+      }
+    }
+    return best;
+  };
+  for (const link of links) {
+    const a = nearestNode(link.ax, link.ay, link.snapTiles);
+    const b = nearestNode(link.bx, link.by, link.snapTiles);
+    if (a < 0 || b < 0 || a === b) continue;
+    const na = nodes[a]!;
+    const nb = nodes[b]!;
+    const edge: GraphEdge = {
+      id: edges.length,
+      segmentId: link.id,
+      kind: layer === "road" ? "street_2lane" : layer === "pipeline" ? "pipeline" : layer === "power" ? "hv_power" : layer === "metro" ? "metro_tunnel" : "rail",
+      a,
+      b,
+      lengthTiles: Math.max(1, Math.hypot(na.x - nb.x, na.y - nb.y)),
+      speedLimitKmh: 30,
+      healthPercent: 100,
+      delayHours: link.delayHours ?? 0,
+      linkId: link.id,
+    };
+    edges.push(edge);
+    na.edgeIds.push(edge.id);
+    nb.edgeIds.push(edge.id);
+  }
+
   return { layer, nodes, edges };
 }
 
@@ -214,7 +273,7 @@ export function travelTimeCost(volumeCapacityByEdge?: ReadonlyMap<number, number
     const speed = Math.max(1, edge.speedLimitKmh * roadHealthSpeedFactor(edge.healthPercent));
     const km = edge.lengthTiles * 0.01;
     const vc = volumeCapacityByEdge?.get(edge.id) ?? 0;
-    return (km / speed) * congestionTravelTimeFactor(vc);
+    return (km / speed) * congestionTravelTimeFactor(vc) + (edge.delayHours ?? 0);
   };
 }
 

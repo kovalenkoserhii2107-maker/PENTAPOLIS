@@ -44,6 +44,9 @@ export interface SectorSummaryDto {
   readonly creditRating: CreditRating;
   readonly debtToRevenue: number;
   readonly imfActive: boolean;
+  readonly imfApprovedWcuMinor?: string;
+  readonly imfDebtWcuMinor?: string;
+  readonly imfTranchesDisbursed?: number;
   readonly households: number;
   readonly citizens: number;
   readonly happinessIndex: number;
@@ -134,11 +137,127 @@ export interface ChatMessageDto {
   readonly text: string;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Sprint 7: border posts, gas & power ring, megaprojects, exchange
+// ---------------------------------------------------------------------------------------------
+
+export type VisaRegimeId = "visa_free" | "paid_visa" | "skilled_quota" | "closed";
+export type CargoLaneId = "raw" | "hydrocarbons" | "agri" | "manufactured" | "luxury";
+
+/** One mayor's side of a border post. */
+export interface BorderSidePolicyDto {
+  readonly sectorId: SectorId;
+  readonly visaRegime: VisaRegimeId;
+  readonly importDuty: Readonly<Record<CargoLaneId, number>>;
+  readonly exportDuty: Readonly<Record<CargoLaneId, number>>;
+  readonly embargo: readonly CargoLaneId[];
+  readonly inspection: "green" | "strict";
+}
+
+export interface PendingBorderChangeDto {
+  readonly sectorId: SectorId;
+  readonly effectiveAtGameSeconds: number;
+  readonly descriptionRu: string;
+  readonly policy: BorderSidePolicyDto;
+}
+
+export interface BorderPostDto {
+  readonly id: string;
+  readonly sectorA: SectorId;
+  readonly sectorB: SectorId;
+  readonly tileX: number;
+  readonly tileY: number;
+  readonly width: number;
+  readonly depth: number;
+  readonly sides: readonly BorderSidePolicyDto[];
+  readonly pending: readonly PendingBorderChangeDto[];
+}
+
+export interface BorderFlowDto {
+  readonly fromSector: SectorId;
+  readonly toSector: SectorId;
+  readonly lane: CargoLaneId;
+  readonly commodity: string;
+  readonly trucksPerHour: number;
+  readonly valuePerMonthWcuMinor: string;
+}
+
+export interface BorderPostStatsDto {
+  readonly postId: string;
+  readonly roadLinked: boolean;
+  readonly trucksPerHour: number;
+  readonly capacityTrucksPerHour: number;
+  readonly queueMinutes: number;
+  readonly crossersPerMonth: number;
+  readonly flows: readonly BorderFlowDto[];
+  /** Per side: customs duty, visa fees and the value lost to smuggling, per game month (local minor). */
+  readonly revenue: ReadonlyArray<{
+    readonly sectorId: SectorId;
+    readonly dutyMinor: string;
+    readonly visaMinor: string;
+    readonly smuggledValueMinor: string;
+  }>;
+}
+
+export interface SectorGasStatsDto {
+  readonly sectorId: SectorId;
+  readonly supplyKm3PerHour: number;
+  readonly demandKm3PerHour: number;
+  readonly importedKm3PerHour: number;
+  readonly exportedKm3PerHour: number;
+  readonly gasifiedPlants: number;
+  readonly gasReadyPlants: number;
+  readonly avgOutputBoost: number;
+}
+
+export interface SectorPowerRingDto {
+  readonly sectorId: SectorId;
+  readonly supplyMw: number;
+  readonly demandMw: number;
+  readonly importedMw: number;
+  readonly exportedMw: number;
+  readonly partners: readonly SectorId[];
+}
+
+export interface MegaprojectStakeDto {
+  readonly sectorId: SectorId;
+  readonly contributedWcuMinor: string;
+  readonly share: number;
+}
+
+export interface MegaprojectDto {
+  readonly buildingId: string;
+  readonly catalogId: string;
+  readonly nameRu: string;
+  readonly costWcuMinor: string;
+  readonly fundedWcuMinor: string;
+  readonly status: "funding" | "building" | "operational";
+  readonly constructionProgress: number;
+  readonly monthlyDividendWcuMinor: string;
+  readonly stakes: readonly MegaprojectStakeDto[];
+}
+
+export interface ListedCompanyDto {
+  readonly buildingId: string;
+  readonly sectorId: SectorId;
+  readonly nameRu: string;
+  readonly level: number;
+  readonly annualRoi: number;
+  readonly marketCapLocalMinor: string;
+  /** Price of 1% of the company in its home currency (minor units). */
+  readonly pricePerPercentLocalMinor: string;
+  readonly cityShare: number;
+  readonly privateShare: number;
+  readonly foreignStakes: ReadonlyArray<{ readonly sectorId: SectorId; readonly share: number }>;
+}
+
 export interface ConstructionMaterialStatsDto {
   readonly material: string;
   readonly nameRu: string;
   readonly demandTonsPerHour: number;
   readonly localTonsPerHour: number;
+  /** Bought from a neighbour's plants across a border post (Sprint 7). */
+  readonly neighborTonsPerHour: number;
   readonly importedTonsPerHour: number;
   readonly localCapacityTonsPerHour: number;
   readonly shortfallTonsPerHour: number;
@@ -400,6 +519,12 @@ export interface WorldSnapshotDto {
   readonly autos: readonly SectorAutoStatsDto[];
   /** Advisors of every sector (the client shows the active one). */
   readonly advisors: ReadonlyArray<{ readonly sectorId: SectorId; readonly advisors: readonly AdvisorDto[] }>;
+  readonly borderPosts: readonly BorderPostDto[];
+  readonly borderStats: readonly BorderPostStatsDto[];
+  readonly gas: readonly SectorGasStatsDto[];
+  readonly powerRing: readonly SectorPowerRingDto[];
+  readonly megaprojects: readonly MegaprojectDto[];
+  readonly exchange: readonly ListedCompanyDto[];
 }
 
 export type ClientCommand =
@@ -485,6 +610,31 @@ export type ClientCommand =
       type: "delete_bus_route";
       sectorId: SectorId;
       routeId: string;
+    }
+  | {
+      type: "set_border_policy";
+      sectorId: SectorId;
+      postId: string;
+      visaRegime?: VisaRegimeId;
+      importDuty?: Partial<Record<CargoLaneId, number>>;
+      exportDuty?: Partial<Record<CargoLaneId, number>>;
+      embargo?: CargoLaneId[];
+      inspection?: "green" | "strict";
+    }
+  | {
+      type: "contribute_megaproject";
+      sectorId: SectorId;
+      buildingId: string;
+      amountUnits: number;
+      source: "treasury" | "swf";
+    }
+  | {
+      /** Buy (+) or sell (−) a share of a listed plant; the city's own plant or a neighbour's. */
+      type: "trade_stake";
+      sectorId: SectorId;
+      buildingId: string;
+      deltaShare: number;
+      source: "treasury" | "swf";
     }
   | {
       type: "repair_road";

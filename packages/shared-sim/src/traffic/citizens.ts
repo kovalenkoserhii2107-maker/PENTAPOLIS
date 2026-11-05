@@ -211,7 +211,11 @@ export function buildVehicleInspector(
   let cargo: VehicleInspectorDto["cargo"] = null;
   if (rec.cargo) {
     const valueLocal = mulRate(rec.cargo.valueWcu, region.fxRatePerWcu);
-    const duty = rec.cargo.exportViaGateway ? mulRate(valueLocal, region.exportDutyRate) : 0n;
+    const duty = rec.cargo.border
+      ? mulRate(valueLocal, rec.cargo.border.importDuty)
+      : rec.cargo.exportViaGateway
+        ? mulRate(valueLocal, region.exportDutyRate)
+        : 0n;
     cargo = {
       commodity: rec.cargo.commodity,
       payload: rec.cargo.payload,
@@ -219,9 +223,11 @@ export function buildVehicleInspector(
       unit: rec.cargo.unit,
       valueMinor: valueLocal.toString(),
       dutyPaidMinor: duty.toString(),
-      dutyLabel: rec.cargo.exportViaGateway
-        ? `Вывозная пошлина ${(region.exportDutyRate * 100).toFixed(1)}% на внешнем шлюзе`
-        : "Внутренняя поставка — без пошлины",
+      dutyLabel: rec.cargo.border
+        ? `Ввозная пошлина ${(rec.cargo.border.importDuty * 100).toFixed(1)}% на КПП #${rec.cargo.border.postId} (Сектор ${rec.cargo.border.toSector})`
+        : rec.cargo.exportViaGateway
+          ? `Вывозная пошлина ${(region.exportDutyRate * 100).toFixed(1)}% на внешнем шлюзе`
+          : "Внутренняя поставка — без пошлины",
     };
   }
 
