@@ -22,6 +22,7 @@ import {
   type ZoneKind,
 } from "@pentapolis/shared-sim";
 import type { ActiveToolState } from "../renderer/PeninsulaScene.ts";
+import { ConstructionMarketCard } from "./ConstructionMarketCard.tsx";
 
 interface BuildToolbarProps {
   snapshot: WorldSnapshotDto;
@@ -185,6 +186,8 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
           </ul>
         </div>
 
+        <ConstructionMarketCard snapshot={snapshot} activeSectorId={activeSectorId} />
+
         {/* Selected Building Equity & Action Inspector */}
         {selectedBuilding && selectedCatalogEntry && (
           <div className="rounded-lg bg-slate-950/95 backdrop-blur-md border border-sky-500/50 p-3 text-xs shadow-2xl space-y-2">
@@ -220,6 +223,11 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
                   <span className="text-sky-300">
                     Стройка {Math.round(selectedBuilding.constructionProgress * 100)}%
                   </span>
+                ) : selectedBuilding.upgradeTargetLevel ? (
+                  <span className="text-sky-300">
+                    Работает на Ур.{selectedBuilding.level}, модернизация до Ур.{selectedBuilding.upgradeTargetLevel}:{" "}
+                    {Math.round((selectedBuilding.upgradeProgress ?? 0) * 100)}%
+                  </span>
                 ) : (
                   <span className="text-emerald-400">В строю (100%)</span>
                 )}
@@ -239,7 +247,9 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
               )}
 
               {selectedBuilding.level < selectedCatalogEntry.maxLevel &&
-                !selectedBuilding.stalledAwaitingPrivate && (
+                !selectedBuilding.stalledAwaitingPrivate &&
+                !selectedBuilding.upgradeTargetLevel &&
+                selectedBuilding.constructionProgress >= 1 && (
                   <button
                     onClick={() => onUpgradeBuilding(selectedBuilding.id)}
                     className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px]"

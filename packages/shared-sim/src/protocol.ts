@@ -83,6 +83,10 @@ export interface BuildingDto {
   readonly constructionProgress: number;
   readonly cityEquityShare: number;
   readonly stalledAwaitingPrivate: boolean;
+  /** Level being built by a timed upgrade (sheet 22); the plant keeps running at `level` meanwhile. */
+  readonly upgradeTargetLevel?: number | null;
+  /** 0..1 progress of the timed upgrade. */
+  readonly upgradeProgress?: number;
 }
 
 export interface ZoneDto {
@@ -113,6 +117,37 @@ export interface ChatMessageDto {
   readonly senderName: string;
   readonly channel: "council" | `dm:${SectorId}-${SectorId}`;
   readonly text: string;
+}
+
+export interface ConstructionMaterialStatsDto {
+  readonly material: string;
+  readonly nameRu: string;
+  readonly demandTonsPerHour: number;
+  readonly localTonsPerHour: number;
+  readonly importedTonsPerHour: number;
+  readonly localCapacityTonsPerHour: number;
+  readonly shortfallTonsPerHour: number;
+  readonly localPricePerTonMinor: string;
+  readonly importPricePerTonMinor: string;
+}
+
+/** Developer construction market of one sector over the last hourly step (Sprint 4, GDD §6.1). */
+export interface SectorConstructionStatsDto {
+  readonly sectorId: SectorId;
+  readonly gatewayImportOpen: boolean;
+  readonly importCapTonsPerHour: number;
+  readonly demandTonsPerHour: number;
+  readonly fillRatio: number;
+  readonly activeSites: number;
+  readonly stalledSites: number;
+  readonly materials: readonly ConstructionMaterialStatsDto[];
+  readonly importDutyMinor: string;
+}
+
+export interface ZoneSiteStatusDto {
+  readonly zoneId: string;
+  readonly fillRatio: number;
+  readonly limitingMaterial: string | null;
 }
 
 export type VehicleRole = "commuter" | "freight" | "bus" | "metro";
@@ -274,6 +309,8 @@ export interface WorldSnapshotDto {
   readonly trafficVersion: number;
   readonly busRoutes: readonly BusRouteDto[];
   readonly transport: readonly SectorTransportStatsDto[];
+  readonly construction: readonly SectorConstructionStatsDto[];
+  readonly zoneSites: readonly ZoneSiteStatusDto[];
 }
 
 export type ClientCommand =

@@ -200,7 +200,8 @@ export class PeninsulaScene {
         this.lastSnapshot.buildings,
         this.lastSnapshot.zones,
         this.catalogs,
-        this.selectedBuildingId
+        this.selectedBuildingId,
+        new Map(this.lastSnapshot.zoneSites.map((z) => [z.zoneId, z]))
       );
     }
   }
@@ -481,7 +482,8 @@ export class PeninsulaScene {
       snapshot.buildings,
       snapshot.zones,
       this.catalogs,
-      this.selectedBuildingId
+      this.selectedBuildingId,
+      new Map(snapshot.zoneSites.map((z) => [z.zoneId, z]))
     );
     this.rebuildEmergencies(snapshot.emergencies);
   }
