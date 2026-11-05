@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import {
   ArrowUpCircle,
   Building2,
+  Bus,
   CheckCircle2,
   Circle,
   Factory,
@@ -32,6 +33,8 @@ interface BuildToolbarProps {
   onBuyoutFactory: (buildingId: string) => void;
   onUpgradeBuilding: (buildingId: string) => void;
   onBulldozeBuilding: (buildingId: string) => void;
+  transportOpen: boolean;
+  onToggleTransport: () => void;
 }
 
 const NETWORK_ITEMS: readonly { kind: NetworkKind; label: string; costHint: string }[] = [
@@ -77,6 +80,8 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
   onBuyoutFactory,
   onUpgradeBuilding,
   onBulldozeBuilding,
+  transportOpen,
+  onToggleTransport,
 }) => {
   const [drawerMode, setDrawerMode] = useState<"none" | "network" | "zone" | "catalog">("none");
   const [catTab, setCatTab] = useState<CatalogTab>("EXT");
@@ -477,6 +482,18 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
           >
             <Hammer className="w-3.5 h-3.5" />
             <span>Каталог (127 объектов)</span>
+          </button>
+
+          <button
+            onClick={onToggleTransport}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition ${
+              transportOpen || tool.mode === "bus_route" || tool.mode === "repair"
+                ? "bg-indigo-600 text-white"
+                : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            <Bus className="w-3.5 h-3.5" />
+            <span>Транспорт</span>
           </button>
         </div>
       </div>

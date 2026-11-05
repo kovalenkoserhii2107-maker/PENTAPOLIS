@@ -7,7 +7,9 @@
  * - 5 External World Gateway portals + 25 color-coded Resource Deposit beacons;
  * - Active Urban Emergency columns;
  * - Smooth pan (`Right/Middle Drag` or `WASD` / Arrows), zoom (`Mouse Wheel`), raycast picking,
- *   and live 90°/45° network & building footprint preview!
+ *   and live 90°/45° network & building footprint preview;
+ * - Sprint 5: live instanced traffic (click a vehicle to inspect it), licensed bus route overlay,
+ *   Underground Overlay for metro, and the bus-route / road-repair tools.
  */
 import * as THREE from "three";
 import {
@@ -19,22 +21,27 @@ import {
   SurfaceType,
   snapToHybridGrid45,
   type ActiveEmergencyDto,
+  type BusRouteStatusDto,
   type ExternalGatewayPoint,
   type MasterCatalogs,
   type NetworkKind,
   type ResourceDepositSite,
   type SectorId,
+  type TrafficStateDto,
   type WorldSnapshotDto,
   type ZoneKind,
 } from "@pentapolis/shared-sim";
 import { RoadMeshBuilder } from "./RoadMeshBuilder.ts";
 import { LotGenerator } from "./LotGenerator.ts";
+import { TrafficRenderer } from "./TrafficRenderer.ts";
 
 export type ActiveToolState =
   | { mode: "inspect" }
   | { mode: "network"; kind: NetworkKind; isFlyover: boolean }
   | { mode: "zone"; zoneKind: ZoneKind; brushSize: number }
-  | { mode: "building"; catalogId: string; width: number; depth: number; orientationDeg: 0 | 45 | 90 | 135 };
+  | { mode: "building"; catalogId: string; width: number; depth: number; orientationDeg: 0 | 45 | 90 | 135 }
+  | { mode: "bus_route"; stopIds: readonly string[] }
+  | { mode: "repair" };
 
 export interface HoveredTileInfo {
   readonly tileX: number;
@@ -49,7 +56,12 @@ export interface PeninsulaSceneCallbacks {
   onBuildSegment?: (fromX: number, fromY: number, toX: number, toY: number, kind: NetworkKind, isFlyover: boolean) => void;
   onPaintZone?: (x: number, y: number, width: number, depth: number, zoneKind: ZoneKind) => void;
   onPlaceBuilding?: (tileX: number, tileY: number, catalogId: string, orientationDeg: 0 | 45 | 90 | 135) => void;
+  onSelectVehicle?: (vehicleId: string | null) => void;
+  onToggleBusStop?: (buildingId: string) => void;
+  onRepairSegment?: (segmentId: string) => void;
 }
+
+const ROUTE_COLORS = [0xdc2626, 0x2563eb, 0x16a34a, 0x9333ea, 0xea580c];
 
 const SECTOR_LAND_RGB: Readonly<Record<number, readonly [number, number, number]>> = {
   [OwnerCode.Sector1]: [88, 132, 92],   // S1 NW Industrial Basin (temperate olive-green)
@@ -83,6 +95,10 @@ export class PeninsulaScene {
   private readonly markersGroup = new THREE.Group();
   private readonly emergenciesGroup = new THREE.Group();
   private readonly previewGroup = new THREE.Group();
+  private readonly trafficRenderer = new TrafficRenderer();
+  private readonly busRoutesGroup = new THREE.Group();
+  private undergroundView = false;
+  private followVehicleId: string | null = null;
 
   private surfaceBytes: Uint8Array | null = null;
   private ownerBytes: Uint8Array | null = null;
@@ -162,6 +178,8 @@ export class PeninsulaScene {
     this.scene.add(this.roadBuilder.group);
     this.scene.add(this.lotGenerator.group);
     this.scene.add(this.emergenciesGroup);
+    this.scene.add(this.trafficRenderer.group);
+    this.scene.add(this.busRoutesGroup);
     this.scene.add(this.previewGroup);
 
     this.updateCameraTransform();
@@ -192,6 +210,86 @@ export class PeninsulaScene {
     this.target.set(tx, 0, tz);
     this.zoomLevel = zoom;
     this.updateCameraTransform();
+  }
+
+  public focusTile(tileX: number, tileY: number, zoom = 6): void {
+    this.followVehicleId = null;
+    this.target.set(tileX, 0, tileY);
+    this.zoomLevel = zoom;
+    this.updateCameraTransform();
+  }
+
+  public setTrafficState(traffic: TrafficStateDto): void {
+    this.trafficRenderer.setTraffic(traffic);
+    this.rebuildBusRoutes(traffic.busRoutes);
+  }
+
+  public setSelectedVehicle(vehicleId: string | null): void {
+    this.trafficRenderer.setSelected(vehicleId);
+    if (!vehicleId) this.followVehicleId = null;
+  }
+
+  /** Keeps the camera centred on a moving vehicle until the player pans or picks something else. */
+  public followVehicle(vehicleId: string | null): void {
+    this.followVehicleId = vehicleId;
+    if (vehicleId && this.zoomLevel < 5) this.zoomLevel = 7;
+  }
+
+  /** Underground Overlay (GDD §5.4): metro tunnels and trains; the surface fades to a ghost. */
+  public setUndergroundView(on: boolean): void {
+    this.undergroundView = on;
+    this.roadBuilder.setUndergroundView(on);
+    this.trafficRenderer.setUndergroundView(on);
+    this.lotGenerator.group.visible = !on;
+    this.busRoutesGroup.visible = !on;
+    if (this.terrainMesh) {
+      const mat = this.terrainMesh.material as THREE.MeshLambertMaterial;
+      mat.color.setHex(on ? 0x2a2f45 : 0xffffff);
+    }
+  }
+
+  private rebuildBusRoutes(routes: readonly BusRouteStatusDto[]): void {
+    while (this.busRoutesGroup.children.length > 0) {
+      const child = this.busRoutesGroup.children.pop()! as THREE.Mesh;
+      child.geometry.dispose();
+      (child.material as THREE.Material).dispose();
+    }
+    routes.forEach((route, idx) => {
+      if (!route.operating) return;
+      const mat = new THREE.MeshBasicMaterial({ color: ROUTE_COLORS[idx % ROUTE_COLORS.length]!, transparent: true, opacity: 0.75 });
+      for (let i = 2; i < route.path.length; i += 2) {
+        const ax = route.path[i - 2]!;
+        const az = route.path[i - 1]!;
+        const bx = route.path[i]!;
+        const bz = route.path[i + 1]!;
+        const len = Math.hypot(bx - ax, bz - az);
+        if (len < 0.05) continue;
+        const ribbon = new THREE.Mesh(new THREE.BoxGeometry(len, 0.04, 0.32), mat.clone());
+        ribbon.position.set((ax + bx) / 2, 0.36, (az + bz) / 2);
+        ribbon.rotation.y = -Math.atan2(bz - az, bx - ax);
+        this.busRoutesGroup.add(ribbon);
+      }
+      mat.dispose();
+    });
+  }
+
+  private nearestRoadSegmentId(tileX: number, tileY: number, maxDistance: number): string | null {
+    if (!this.lastSnapshot) return null;
+    let best: string | null = null;
+    let bestD = maxDistance;
+    for (const seg of this.lastSnapshot.segments) {
+      if (!["street_2lane", "avenue_4lane", "express_6lane", "heavy_bypass"].includes(seg.kind)) continue;
+      const vx = seg.toX - seg.fromX;
+      const vy = seg.toY - seg.fromY;
+      const len2 = vx * vx + vy * vy;
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((tileX - seg.fromX) * vx + (tileY - seg.fromY) * vy) / len2));
+      const d = Math.hypot(tileX - (seg.fromX + vx * t), tileY - (seg.fromY + vy * t));
+      if (d < bestD) {
+        bestD = d;
+        best = seg.id;
+      }
+    }
+    return best;
   }
 
   public focusOverview(): void {
@@ -378,6 +476,7 @@ export class PeninsulaScene {
   public applySnapshot(snapshot: WorldSnapshotDto): void {
     this.lastSnapshot = snapshot;
     this.roadBuilder.rebuild(snapshot.segments);
+    this.roadBuilder.setUndergroundView(this.undergroundView);
     this.lotGenerator.rebuild(
       snapshot.buildings,
       snapshot.zones,
@@ -457,6 +556,38 @@ export class PeninsulaScene {
       );
       ghost.position.set(hover.tileX + s * 0.5, 0.2, hover.tileY + s * 0.5);
       this.previewGroup.add(ghost);
+      return;
+    }
+
+    if (this.tool.mode === "bus_route") {
+      const chosen = new Set(this.tool.stopIds);
+      for (const b of this.lastSnapshot?.buildings ?? []) {
+        if (b.catalogId !== "TRN-01") continue;
+        const order = this.tool.stopIds.indexOf(b.id);
+        const ring = new THREE.Mesh(
+          new THREE.CylinderGeometry(chosen.has(b.id) ? 2.4 : 1.8, chosen.has(b.id) ? 2.4 : 1.8, chosen.has(b.id) ? 3 + order * 0.4 : 1.2, 16),
+          new THREE.MeshBasicMaterial({ color: chosen.has(b.id) ? 0xfacc15 : 0x38bdf8, transparent: true, opacity: 0.55 })
+        );
+        ring.position.set(b.tileX + b.width / 2, 1, b.tileY + b.depth / 2);
+        this.previewGroup.add(ring);
+      }
+      return;
+    }
+
+    if (this.tool.mode === "repair") {
+      const segId = this.nearestRoadSegmentId(hover.tileX, hover.tileY, 3);
+      const seg = segId ? this.lastSnapshot?.segments.find((s) => s.id === segId) : undefined;
+      if (seg) {
+        const dx = seg.toX - seg.fromX;
+        const dz = seg.toY - seg.fromY;
+        const ghost = new THREE.Mesh(
+          new THREE.BoxGeometry(Math.hypot(dx, dz) + 1, 0.5, 2.6),
+          new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.55 })
+        );
+        ghost.position.set(seg.fromX + dx / 2, 0.3, seg.fromY + dz / 2);
+        ghost.rotation.y = -Math.atan2(dz, dx);
+        this.previewGroup.add(ghost);
+      }
       return;
     }
 
@@ -550,6 +681,7 @@ export class PeninsulaScene {
     const onPointerDown = (e: PointerEvent) => {
       if (e.button === 2 || e.button === 1 || this.keysPressed.has("Space")) {
         this.isPanning = true;
+        this.followVehicleId = null;
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
         return;
@@ -560,9 +692,29 @@ export class PeninsulaScene {
       if (!tile) return;
 
       if (this.tool.mode === "inspect") {
-        const bId = this.pickBuildingAt(e.clientX, e.clientY);
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const vehicleId = this.trafficRenderer.pickNearest(e.clientX, e.clientY, this.camera, rect);
+        if (vehicleId) {
+          this.callbacks.onSelectVehicle?.(vehicleId);
+          return;
+        }
+        const bId = this.undergroundView ? null : this.pickBuildingAt(e.clientX, e.clientY);
         this.setSelectedBuilding(bId);
         this.callbacks.onSelectBuilding?.(bId);
+        this.callbacks.onSelectVehicle?.(null);
+        return;
+      }
+
+      if (this.tool.mode === "bus_route") {
+        const bId = this.pickBuildingAt(e.clientX, e.clientY);
+        const b = bId ? this.lastSnapshot?.buildings.find((x) => x.id === bId) : undefined;
+        if (b?.catalogId === "TRN-01") this.callbacks.onToggleBusStop?.(b.id);
+        return;
+      }
+
+      if (this.tool.mode === "repair") {
+        const segId = this.nearestRoadSegmentId(tile.tileX, tile.tileY, 3);
+        if (segId) this.callbacks.onRepairSegment?.(segId);
         return;
       }
 
@@ -699,6 +851,7 @@ export class PeninsulaScene {
     if (this.keysPressed.has("KeyD") || this.keysPressed.has("ArrowRight")) moveIsoX += 1;
 
     if (moveIsoX !== 0 || moveIsoY !== 0) {
+      this.followVehicleId = null;
       const dx = (moveIsoX * 0.7071 + moveIsoY * 0.7071) * speed;
       const dz = (-moveIsoX * 0.7071 + moveIsoY * 0.7071) * speed;
       this.target.x = Math.max(40, Math.min(960, this.target.x + dx));
@@ -706,7 +859,14 @@ export class PeninsulaScene {
       this.updateCameraTransform();
     }
 
-    this.roadBuilder.updateTraffic(elapsed);
+    this.trafficRenderer.update(elapsed);
+    if (this.followVehicleId) {
+      const pos = this.trafficRenderer.getVehiclePosition(this.followVehicleId);
+      if (pos) {
+        this.target.set(pos.x, 0, pos.z);
+        this.updateCameraTransform();
+      }
+    }
     this.lotGenerator.updateAnimations(elapsed);
     this.renderer.render(this.scene, this.camera);
   };
