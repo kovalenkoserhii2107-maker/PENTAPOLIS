@@ -1,0 +1,65 @@
+,PENTAPOLIS: BUILDING LEVELS (UPGRADE CURVES LV.1-5 AND LEVEL CALCULATOR),,,,,,,,,,
+,"Each catalog row names a curve (column AE). A building at level N = its Lv.1 values x the curve multipliers. Blue = input, green = link, black = formula. GDD §84.",,,,,,,,,,
+,,,,,,,,,,,
+,SECTION 1: LEVEL CURVES,,,,,,,,,,
+,Curve,Level,Upgrade Cost to Reach Level (x Lv.1 build cost),Capacity (x Lv.1),Workers (x Lv.1),Engineers (x Lv.1),Upkeep (x Lv.1),Power (x Lv.1),Upgrade Time (game h),Source / Logic,Key
+,PROD,1.0,0.0,1.0,1.0,1.0,1.0,1,0.0,Zoning & Building Upgrades rows 7-11 (cost scaled to the Tier 1 mine),PROD|1
+,PROD,2.0,1.578947368,1.8,2.25,3.0,1.6,1.8,24.0,Zoning & Building Upgrades rows 7-11 (cost scaled to the Tier 1 mine),PROD|2
+,PROD,3.0,3.684210526,3.0,4.5,7.5,2.5,3,72.0,Zoning & Building Upgrades rows 7-11 (cost scaled to the Tier 1 mine),PROD|3
+,PROD,4.0,5.263157895,4.5,7.0,15.0,3.6,4.5,120.0,Zoning & Building Upgrades rows 7-11 (cost scaled to the Tier 1 mine),PROD|4
+,PROD,5.0,6.842105263,6.5,10.0,25.0,5.0,6.5,168.0,Zoning & Building Upgrades rows 7-11 (cost scaled to the Tier 1 mine),PROD|5
+,ENERGY,1.0,0.0,1.0,1.0,1.0,1.0,1.0,0.0,Extra generating units on the same site,ENERGY|1
+,ENERGY,2.0,0.8,1.8,1.6,1.6,1.7,1.0,48.0,Extra generating units on the same site,ENERGY|2
+,ENERGY,3.0,1.6,2.8,2.4,2.4,2.6,1.0,96.0,Extra generating units on the same site,ENERGY|3
+,ENERGY,4.0,2.4,4.0,3.2,3.2,3.6,1.0,168.0,Extra generating units on the same site,ENERGY|4
+,ENERGY,5.0,3.4,5.5,4.0,4.0,4.8,1.0,240.0,Extra generating units on the same site,ENERGY|5
+,HUB-TRUCK,1.0,0.0,1,1,1,1,1,0.0,Logistics Hubs & Road Physics rows 7-11,HUB-TRUCK|1
+,HUB-TRUCK,2.0,1.125,2.533333333,1.746688265,1.746688265,2.333333333,1.916834583,24.0,Logistics Hubs & Road Physics rows 7-11,HUB-TRUCK|2
+,HUB-TRUCK,3.0,3,5.666666667,2.831369829,2.831369829,4.583333333,3.367668748,72.0,Logistics Hubs & Road Physics rows 7-11,HUB-TRUCK|3
+,HUB-TRUCK,4.0,6.25,10.66666667,4.138254864,4.138254864,7.916666667,5.243485924,120.0,Logistics Hubs & Road Physics rows 7-11,HUB-TRUCK|4
+,HUB-TRUCK,5.0,11.25,18.66666667,5.789486737,5.789486737,12.5,7.757945791,168.0,Logistics Hubs & Road Physics rows 7-11,HUB-TRUCK|5
+,HUB-RAIL,1.0,0.0,1,1,1,1,1,0.0,Logistics Hubs & Road Physics rows 12-16,HUB-RAIL|1
+,HUB-RAIL,2.0,2.4,2.5,1.732862108,1.732862108,2,1.899144482,24.0,Logistics Hubs & Road Physics rows 12-16,HUB-RAIL|2
+,HUB-RAIL,3.0,4.8,5.333333333,2.730230015,2.730230015,3.714285714,3.227744201,72.0,Logistics Hubs & Road Physics rows 12-16,HUB-RAIL|3
+,HUB-RAIL,4.0,8.666666667,9.166666667,3.778564704,3.778564704,6,4.715719965,120.0,Logistics Hubs & Road Physics rows 12-16,HUB-RAIL|4
+,HUB-RAIL,5.0,14.66666667,15,5.077556392,5.077556392,9.142857143,6.656775051,168.0,Logistics Hubs & Road Physics rows 12-16,HUB-RAIL|5
+,HUB-SEA,1.0,0.0,1,1,1,1,1,0.0,Logistics Hubs & Road Physics rows 17-21,HUB-SEA|1
+,HUB-SEA,2.0,2.25,2.5,1.732862108,1.732862108,2,1.899144482,24.0,Logistics Hubs & Road Physics rows 17-21,HUB-SEA|2
+,HUB-SEA,3.0,4.25,5,2.626527804,2.626527804,3.666666667,3.085169314,72.0,Logistics Hubs & Road Physics rows 17-21,HUB-SEA|3
+,HUB-SEA,4.0,7.5,8.5,3.611198451,3.611198451,6.333333333,4.472941807,120.0,Logistics Hubs & Road Physics rows 17-21,HUB-SEA|4
+,HUB-SEA,5.0,12,14,4.871658326,4.871658326,9.666666667,6.342925712,168.0,Logistics Hubs & Road Physics rows 17-21,HUB-SEA|5
+,HUB-AIR,1.0,0.0,1,1,1,1,1,0.0,Logistics Hubs & Road Physics rows 22-26,HUB-AIR|1
+,HUB-AIR,2.0,2.166666667,2.75,1.834845987,1.834845987,2,2.030172243,24.0,Logistics Hubs & Road Physics rows 22-26,HUB-AIR|2
+,HUB-AIR,3.0,4.166666667,6.5,3.074312522,3.074312522,3.625,3.707143092,72.0,Logistics Hubs & Road Physics rows 22-26,HUB-AIR|3
+,HUB-AIR,4.0,7,12,4.44128607,4.44128607,5.75,5.694123368,120.0,Logistics Hubs & Road Physics rows 22-26,HUB-AIR|4
+,HUB-AIR,5.0,10.66666667,20,6.034176337,6.034176337,8.625,8.141810631,168.0,Logistics Hubs & Road Physics rows 22-26,HUB-AIR|5
+,PUBLIC,1.0,0.0,1.0,1,1,1.0,1,0.0,"More places, beds or coverage per building",PUBLIC|1
+,PUBLIC,2.0,0.7,1.8,1.8,1.8,1.6,1.8,24.0,"More places, beds or coverage per building",PUBLIC|2
+,PUBLIC,3.0,1.5,2.6,2.6,2.6,2.3,2.6,48.0,"More places, beds or coverage per building",PUBLIC|3
+,PUBLIC,4.0,2.4,3.4,3.4,3.4,3.0,3.4,96.0,"More places, beds or coverage per building",PUBLIC|4
+,PUBLIC,5.0,3.5,4.2,4.2,4.2,3.7,4.2,144.0,"More places, beds or coverage per building",PUBLIC|5
+,UTILITY,1.0,0.0,1.0,1.0,1.0,1.0,1,0.0,More throughput on the same site,UTILITY|1
+,UTILITY,2.0,0.8,1.9,1.5,1.6,1.7,1.9,24.0,More throughput on the same site,UTILITY|2
+,UTILITY,3.0,1.7,2.8,2.0,2.2,2.5,2.8,72.0,More throughput on the same site,UTILITY|3
+,UTILITY,4.0,2.6,3.6,2.5,2.8,3.2,3.6,120.0,More throughput on the same site,UTILITY|4
+,UTILITY,5.0,3.6,4.5,3.0,3.4,4.0,4.5,168.0,More throughput on the same site,UTILITY|5
+,BUSINESS,1.0,0.0,1.0,1.0,1.0,1.0,1.0,0.0,Bigger outlet or venue; capacity = monthly revenue,BUSINESS|1
+,BUSINESS,2.0,0.6,1.7,1.6,1.5,1.5,1.5,12.0,Bigger outlet or venue; capacity = monthly revenue,BUSINESS|2
+,BUSINESS,3.0,1.4,2.6,2.4,2.0,2.2,2.2,24.0,Bigger outlet or venue; capacity = monthly revenue,BUSINESS|3
+,NONE,1.0,0.0,1.0,1.0,1.0,1.0,1.0,0.0,"Single level: lines, zones (density changes by zone type), megaprojects",NONE|1
+,,,,,,,,,,,
+,,,,,,,,,,,
+,SECTION 2: LEVEL CALCULATOR,,,,,,,,,,
+,Building ID,PRO-01,Type any ID from the Building Catalog,,,,,,,,
+,Level,3.0,,,,,,,,,
+,Name,Blast Furnace Mill,,,,,,,,,
+,Level curve,PROD,,,,,,,,,
+,Max level,5,,,,,,,,,
+,Level check,OK,,,,,,,,,
+,Lv.1 build cost,2000000,,,,,,,,,
+,Total upgrade spend from Lv.1 to this level,10526315.79,,,,,,,,,
+,Capacity at this level,12,t per game hour,,,,,,,,
+,Workers,135,,,,,,,,,
+,Engineers,37.5,,,,,,,,,
+,Upkeep ($/game month),112500,,,,,,,,,
+,Power (MW),60,,,,,,,,,

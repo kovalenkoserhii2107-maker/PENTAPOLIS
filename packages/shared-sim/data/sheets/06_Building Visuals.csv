@@ -1,0 +1,132 @@
+,"PENTAPOLIS: BUILDING VISUALS (VARIANTS, DISTRICT CLASSES, SECTOR STYLES, BRANDS)",,,,,,,,,,,,
+,"Each placed building picks its look from its visual family: base model x roof x facade x palette x wear x props x sector style (x brand). The pick is deterministic from the building's id, so neighbours differ and every player sees the same city. GDD §85.",,,,,,,,,,,,
+,,,,,,,,,,,,,
+,SECTION 1: DISTRICT CLASSES,,,,,,,,,,,,
+,Class,Name,How the Class Is Set,Typical Residents,Palette,Materials,Street Props,Wear Range,,,,,
+,P,Poor,Land value Tier 1-2 (§69) or workers above 60% of households within 6 tiles,"Workers, unemployed, retirees","Faded pastels, grey, rust","Panel concrete, plain brick, metal cladding, wood","Laundry lines, kiosks, old cars, dirt yards",Lived-in to worn,,,,,
+,M,Middle,Land value Tier 3 or engineers above 30%,"Engineers, specialists, families","Warm brick, beige render, green accents","Brick, render, wood siding","Gardens, hedges, bikes, playgrounds",New to lived-in,,,,,
+,R,Rich,Land value Tier 4-5 or elite above 20%,"Entrepreneurs, elite","White, glass, dark wood, gold accents","Stone, glass curtain, timber","Pools, fountains, premium cars, gated walls, palms",New,,,,,
+,Rule,"The class is recalculated every game month. A building switches to a variant of the new class only when it is rebuilt: density upgrade, fire, or 12 game months after the class changed. Districts gentrify or decline gradually and visibly; unpaid upkeep raises wear in any class.",,,,,,,,,,,
+,,,,,,,,,,,,,
+,SECTION 2: SECTOR ARCHITECTURAL STYLES,,,,,,,,,,,,
+,Sector,Style,Preferred Roofs,Preferred Facades,Colours,Signature Details,,,,,,,
+,S1 North,Industrial northern,"Steep gable, mansard","Dark red brick, metal cladding","Brick red, soot grey, ochre","Chimneys, snow guards, tram wires",,,,,,,
+,S2 North-East Shelf,Coastal port,"Flat, low hip","White render, painted wood","White, navy, sand","Shutters, rope rails, harbour cranes on the skyline",,,,,,,
+,S3 Central Valley,Rural timber,Tiled gable,"Timber, wood siding","Honey wood, terracotta, sage","Orchards, barns, wooden fences",,,,,,,
+,S4 South Foothills,Mountain stone,Terracotta hip,"Stone, render","Limestone cream, terracotta","Arches, terraces, vineyards",,,,,,,
+,S5 East Cape,Modern tech,"Flat, green roof","Glass curtain, steel","Glass blue, white, teal","Solar panels, roof gardens, LED facades",,,,,,,
+,,,,,,,,,,,,,
+,SECTION 3: MODIFIER AXES,,,,,,,,,,,,
+,Axis,Options,Count,,,,,,,,,,
+,Roof shape,"Gable, hip, flat, mansard, shed, green roof",6.0,,,,,,,,,,
+,Facade material,"Panel concrete, red brick, yellow brick, render, wood siding, stone, glass curtain, metal cladding",8.0,,,,,,,,,,
+,Colour palette,"8 per district class (24 in total), tinted by sector style",8.0,,,,,,,,,,
+,Wear state,"New, lived-in, worn",3.0,,,,,,,,,,
+,Yard and prop set,"6 per district class (cars, gardens, fences, laundry, pools...)",6.0,,,,,,,,,,
+,Seasonal planting (parks),"Spring, summer, autumn, winter",4.0,,,,,,,,,,
+,,,,,,,,,,,,,
+,SECTION 4: VISUAL FAMILIES AND NUMBER OF DIFFERENT LOOKS,,,,,,,,,,,,
+,Family,Catalog IDs,Base Models,Roof Choices per Model,Facade Choices per Model,Palettes,Wear States,Prop Sets,Sector Styles,Brands,Different Looks,,
+,RES-LOW,RES-01,18,2.0,2.0,8.0,3.0,6.0,5.0,1.0,51840,,
+,RES-MID,RES-02,14,2.0,2.0,8.0,3.0,6.0,5.0,1.0,40320,,
+,RES-HIGH,RES-03,12,1.0,2.0,8.0,3.0,6.0,5.0,1.0,17280,,
+,PARK,CIV-03,11,1.0,1.0,4.0,3.0,6.0,5.0,1.0,3960,,
+,FUEL,BIZ-09,4,1.0,1.0,1.0,3.0,3.0,5.0,7,1260,,
+,STOREFRONT,"BIZ-01 to BIZ-06, BIZ-08",8,2.0,2.0,8.0,3.0,6.0,5.0,1.0,23040,,
+,SUPERMARKET,BIZ-10,3.0,2.0,2.0,1.0,3.0,3.0,5.0,4,2160,,
+,BANK,"BIZ-11, FIN-01",3.0,1.0,2.0,1.0,3.0,2.0,5.0,4,720,,
+,SINGLE-MODEL,All other catalog IDs (one model each),1.0,1.0,1.0,1.0,3.0,1.0,5.0,1.0,15,,
+,Total (one building type of each family),,73,,,,,,,,140580,,
+,,,,,,,,,,,,,
+,,,,,,,,,,,,,
+,,,,,,,,,,,,,
+,SECTION 5: BASE MODELS (VARIANT CATALOG),,,,,,,,,,,,
+,Variant ID,Family,Name (EN),Название (RU),District Class,Floors,Footprint (tiles),Roof Options,Facade Options,Signature Props,Model Key,Weight,Unlock Stage
+,RES-LOW-01,RES-LOW,Worker Barracks Row,Барак рабочих,P,1.0,2x1,"Gable, shed","Wood siding, metal cladding","Laundry lines, coal sheds",res-low_01.glb,10.0,S0
+,RES-LOW-02,RES-LOW,Small Brick Cottage,Кирпичный домик,P,1.0,1x1,Gable,Red brick,"Vegetable patch, picket fence",res-low_02.glb,10.0,S0
+,RES-LOW-03,RES-LOW,Modular Trailer Home,Модульный дом-вагончик,P,1.0,1x1,Flat,Metal cladding,"Old car, satellite dish",res-low_03.glb,10.0,S0
+,RES-LOW-04,RES-LOW,Self-Built Two-Storey,Самострой в два этажа,P,2.0,1x1,"Shed, gable","Plain brick, render","Unfinished extension, rebar",res-low_04.glb,10.0,S0
+,RES-LOW-05,RES-LOW,Wooden Duplex,Деревянный дуплекс,P,2.0,2x1,Gable,Wood siding,"Woodpile, chickens",res-low_05.glb,10.0,S0
+,RES-LOW-06,RES-LOW,Company Village House,Дом заводского посёлка,P,1.0,1x1,Hip,Yellow brick,"Bench, shared yard",res-low_06.glb,10.0,S0
+,RES-LOW-07,RES-LOW,Suburban Cottage,Пригородный коттедж,M,2.0,2x2,"Gable, hip","Render, red brick","Lawn, hedge, garage",res-low_07.glb,10.0,S0
+,RES-LOW-08,RES-LOW,Garden Bungalow,Бунгало с садом,M,1.0,2x2,Hip,Wood siding,"Orchard, pergola",res-low_08.glb,10.0,S0
+,RES-LOW-09,RES-LOW,Semi-Detached Pair,Дом на две семьи,M,2.0,2x1,Gable,Red brick,Twin driveways,res-low_09.glb,10.0,S0
+,RES-LOW-10,RES-LOW,Veranda House,Дом с верандой,M,2.0,2x2,Gable,"Wood siding, stone base","Porch, swing",res-low_10.glb,10.0,S0
+,RES-LOW-11,RES-LOW,Modern Box House,Современный дом-куб,M,2.0,2x2,Flat,"Render, wood","Solar panels, carport",res-low_11.glb,10.0,S0
+,RES-LOW-12,RES-LOW,Farmhouse Estate,Фермерская усадьба,M,2.0,2x2,Gable,"Timber, stone","Barn, small field",res-low_12.glb,10.0,S0
+,RES-LOW-13,RES-LOW,Villa with Pool,Вилла с бассейном,R,2.0,2x2,"Flat, hip","White render, glass","Pool, palms",res-low_13.glb,10.0,S0
+,RES-LOW-14,RES-LOW,Classic Mansion,Классический особняк,R,3.0,3x3,Mansard,Stone,"Fountain, gated drive",res-low_14.glb,10.0,S0
+,RES-LOW-15,RES-LOW,Hillside Glass House,Стеклянный дом на склоне,R,2.0,2x2,"Flat, green roof","Glass, timber",Infinity terrace,res-low_15.glb,10.0,S0
+,RES-LOW-16,RES-LOW,Seaside Villa,Приморская вилла,R,2.0,2x2,Flat,White render,"Private pier, yacht",res-low_16.glb,10.0,S0
+,RES-LOW-17,RES-LOW,Gated Estate,Закрытое поместье,R,2.0,3x3,Hip,"Stone, red brick","Wall, guard house, tennis court",res-low_17.glb,10.0,S0
+,RES-LOW-18,RES-LOW,Eco Luxury Lodge,Эко-резиденция,R,2.0,2x2,Green roof,"Timber, glass","Wind turbine, greenhouse",res-low_18.glb,10.0,S0
+,RES-MID-01,RES-MID,Panel Block 5-Storey,Панельная пятиэтажка,P,5.0,2x2,Flat,Panel concrete,"Laundry, kiosk",res-mid_01.glb,10.0,S1
+,RES-MID-02,RES-MID,Brick Dormitory,Кирпичное общежитие,P,4.0,2x2,Gable,Red brick,"Smoking bench, bikes",res-mid_02.glb,10.0,S1
+,RES-MID-03,RES-MID,Gallery Access Block,Дом с открытыми галереями,P,4.0,3x2,Flat,Panel concrete,Open corridors,res-mid_03.glb,10.0,S1
+,RES-MID-04,RES-MID,Converted Warehouse Flats,Квартиры в бывшем складе,P,3.0,2x2,Shed,"Red brick, metal cladding",Fire escapes,res-mid_04.glb,10.0,S1
+,RES-MID-05,RES-MID,Row Tenements,Рядовые доходные дома,P,3.0,3x1,Flat,Plain brick,Shop on ground floor,res-mid_05.glb,10.0,S1
+,RES-MID-06,RES-MID,Townhouse Terrace,Таунхаусы,M,3.0,3x1,"Gable, mansard",Red brick,Front gardens,res-mid_06.glb,10.0,S1
+,RES-MID-07,RES-MID,Courtyard Block,Квартал с двором,M,5.0,3x3,Hip,Render,Inner playground,res-mid_07.glb,10.0,S1
+,RES-MID-08,RES-MID,Brick 9-Storey,Кирпичная девятиэтажка,M,9.0,2x2,Flat,Yellow brick,"Parking, trees",res-mid_08.glb,10.0,S1
+,RES-MID-09,RES-MID,Riverside Lofts,Лофты у реки,M,4.0,2x2,Flat,"Red brick, glass",Balconies with plants,res-mid_09.glb,10.0,S1
+,RES-MID-10,RES-MID,Co-op Mid-Rise,Кооперативный дом,M,6.0,2x2,Flat,Render,Roof terrace,res-mid_10.glb,10.0,S1
+,RES-MID-11,RES-MID,Boutique Residence,Клубный дом,R,5.0,2x2,Mansard,Stone,"Concierge, valet parking",res-mid_11.glb,10.0,S1
+,RES-MID-12,RES-MID,Terrace Apartments,Террасный дом,R,6.0,3x2,Green roof,"Glass, timber",Stepped gardens,res-mid_12.glb,10.0,S1
+,RES-MID-13,RES-MID,Marina Apartments,Апартаменты у марины,R,6.0,2x2,Flat,"White render, glass",Boat berths,res-mid_13.glb,10.0,S1
+,RES-MID-14,RES-MID,Heritage Mansion Flats,Квартиры в старинном особняке,R,4.0,2x2,Mansard,Stone,Courtyard fountain,res-mid_14.glb,10.0,S1
+,RES-HIGH-01,RES-HIGH,Panel Tower 16-Storey,Панельная высотка,P,16.0,2x2,Flat,Panel concrete,"Graffiti, kiosks",res-high_01.glb,10.0,S3
+,RES-HIGH-02,RES-HIGH,Social Housing Slab,Социальный дом-пластина,P,12.0,4x2,Flat,Panel concrete,Wide parking,res-high_02.glb,10.0,S3
+,RES-HIGH-03,RES-HIGH,Worker Hostel Tower,Башня-общежитие,P,14.0,2x2,Flat,Metal cladding,Bike racks,res-high_03.glb,10.0,S3
+,RES-HIGH-04,RES-HIGH,Micro-Flat Block,Дом микроквартир,P,18.0,2x2,Flat,Render,Street food stalls,res-high_04.glb,10.0,S3
+,RES-HIGH-05,RES-HIGH,Residential Tower,Жилая башня,M,20.0,3x3,Flat,"Render, glass","Gym, playground",res-high_05.glb,10.0,S3
+,RES-HIGH-06,RES-HIGH,Twin Towers Complex,Двухбашенный комплекс,M,22.0,4x3,Flat,"Glass, red brick",Podium shops,res-high_06.glb,10.0,S3
+,RES-HIGH-07,RES-HIGH,Stepped Tower,Ступенчатая башня,M,18.0,3x3,Green roof,Render,Sky gardens,res-high_07.glb,10.0,S3
+,RES-HIGH-08,RES-HIGH,Mixed-Use High-Rise,Высотка со смешанным назначением,M,24.0,3x3,Flat,Glass,Ground-floor retail,res-high_08.glb,10.0,S3
+,RES-HIGH-09,RES-HIGH,Glass Skyscraper Residence,Жилой небоскрёб,R,40.0,3x3,Flat,Glass curtain,Helipad,res-high_09.glb,10.0,S3
+,RES-HIGH-10,RES-HIGH,Twisted Tower,Закрученная башня,R,45.0,3x3,Flat,Glass curtain,Rooftop pool,res-high_10.glb,10.0,S3
+,RES-HIGH-11,RES-HIGH,Vertical Forest Tower,Башня «вертикальный лес»,R,30.0,3x3,Green roof,"Concrete, trees",Tree balconies,res-high_11.glb,10.0,S3
+,RES-HIGH-12,RES-HIGH,Waterfront Penthouse Tower,Башня с пентхаусами у моря,R,35.0,3x3,Flat,"Glass, white render","Marina, sky lounge",res-high_12.glb,10.0,S3
+,PARK-01,PARK,Courtyard Playground,Детская площадка во дворе,P,0.0,1x1,-,-,"Swings, sandbox, benches",park_01.glb,10.0,S0
+,PARK-02,PARK,Dirt Football Pitch,Земляное футбольное поле,P,0.0,2x1,-,-,"Goals, bleachers",park_02.glb,10.0,S0
+,PARK-03,PARK,Pocket Square,Сквер,P,0.0,1x1,-,-,"Benches, kiosk, single fountain",park_03.glb,10.0,S0
+,PARK-04,PARK,Neighbourhood Park,Районный парк,M,0.0,2x2,-,-,"Paths, pond, playground",park_04.glb,10.0,S0
+,PARK-05,PARK,Sports Park,Спортивный парк,M,0.0,2x2,-,-,"Courts, running track, skate ramp",park_05.glb,10.0,S0
+,PARK-06,PARK,Riverside Promenade,Набережная,M,0.0,3x1,-,-,"Boardwalk, cafes, lamps",park_06.glb,10.0,S0
+,PARK-07,PARK,Memorial Park,Мемориальный парк,M,0.0,2x2,-,-,"Monument, alleys, flowerbeds",park_07.glb,10.0,S0
+,PARK-08,PARK,Landscaped Garden with Fountains,Ландшафтный сад с фонтанами,R,0.0,3x3,-,-,"Fountain cascade, topiary",park_08.glb,10.0,S0
+,PARK-09,PARK,Botanical Garden,Ботанический сад,R,0.0,3x3,-,-,"Glass greenhouse, exotic trees",park_09.glb,10.0,S0
+,PARK-10,PARK,Sculpture Park,Парк скульптур,R,0.0,2x2,-,-,"Art pieces, lawns, pavilion",park_10.glb,10.0,S0
+,PARK-11,PARK,Stone Garden,Сад камней,R,0.0,2x2,-,-,"Raked gravel, bridge, koi pond",park_11.glb,10.0,S0
+,FUEL-01,FUEL,Kiosk Station (2 pumps),Мини-АЗС на 2 колонки,P,1.0,1x1,Flat canopy,Brand colours,"Kiosk, tyre stack",fuel_01.glb,10.0,S1
+,FUEL-02,FUEL,"Standard Station (4 pumps, shop)",Стандартная АЗС на 4 колонки с магазином,M,1.0,2x1,Brand canopy,Brand colours,"Shop, air pump, car wash bay",fuel_02.glb,10.0,S1
+,FUEL-03,FUEL,"Highway Truck Stop (8 pumps, diner)",Трассовый комплекс на 8 колонок с кафе,Any,1.0,3x2,Brand canopy,Brand colours,"Truck lanes, diner, parking",fuel_03.glb,10.0,S1
+,FUEL-04,FUEL,"Premium Service Station (EV, cafe, wash)","Премиальная станция с зарядками, кафе и мойкой",R,1.0,2x2,Brand canopy,"Brand colours, glass","EV chargers, cafe, car wash",fuel_04.glb,10.0,S1
+,STOREFRONT-01,STOREFRONT,Corner Kiosk,Ларёк на углу,P,1.0,1x1,Flat,Metal cladding,"Crates, awning",storefront_01.glb,10.0,S0
+,STOREFRONT-02,STOREFRONT,Market Stall Row,Ряд рыночных лотков,P,1.0,2x1,Shed,"Wood, tarpaulin","Fruit crates, crowds",storefront_02.glb,10.0,S0
+,STOREFRONT-03,STOREFRONT,Shop in House Ground Floor,Магазин на первом этаже дома,P,2.0,1x1,Gable,Plain brick,Hand-painted sign,storefront_03.glb,10.0,S0
+,STOREFRONT-04,STOREFRONT,Strip Mall,Торговый ряд,M,1.0,3x1,Flat,Render,"Parking, signs",storefront_04.glb,10.0,S0
+,STOREFRONT-05,STOREFRONT,Corner Store with Awning,Угловой магазин с маркизой,M,2.0,1x1,Flat,Red brick,"Awning, bicycles",storefront_05.glb,10.0,S0
+,STOREFRONT-06,STOREFRONT,Bakery Cottage,Пекарня в домике,M,1.0,1x1,Gable,Timber,"Bread display, bench",storefront_06.glb,10.0,S0
+,STOREFRONT-07,STOREFRONT,Boutique Arcade,Бутиковая галерея,R,2.0,2x1,Mansard,"Stone, glass","Planters, valet",storefront_07.glb,10.0,S0
+,STOREFRONT-08,STOREFRONT,Glass Cafe Pavilion,Стеклянный павильон-кафе,R,1.0,1x1,Flat,Glass,"Terrace, parasols",storefront_08.glb,10.0,S0
+,,,,,,,,,,,,,
+,,,,,,,,,,,,,
+,SECTION 6: BRANDS (FICTIONAL CHAINS),,,,,,,,,,,,
+,Brand ID,Brand,Бренд (RU),Building,Owner and Supplier Rule,Colours,Signature Shape,Price Tier,Preferred District,,,,
+,BR-FUEL-01,PentaFuel,ПентаФьюэл,BIZ-09,State corporation of the region; fuel from the region's state refinery,Player colour + white,Wide flat canopy,Standard,Any,,,,
+,BR-FUEL-02,Shelf & Sail,Шельф и Парус,BIZ-09,Private firm owning a refinery in Sector 2,Navy + sand,Wave canopy,Standard,M,,,,
+,BR-FUEL-03,Valley Petrol,Долина-Петрол,BIZ-09,Private chain buying the cheapest fuel on the exchange,Green + yellow,Barn-roof canopy,Budget,"P, M",,,,
+,BR-FUEL-04,Ironside Fuel,Айронсайд,BIZ-09,Private firm in Sector 1; diesel for heavy trucks,Black + orange,Steel truss canopy,"Standard, truck discounts",Highways,,,,
+,BR-FUEL-05,Azure Cape Energy,Лазурный Мыс,BIZ-09,Private firm in Sector 5; premium fuel and EV charging,Teal + white,Curved glass canopy,Premium,R,,,,
+,BR-FUEL-06,Gas & Go,Газ-энд-Гоу,BIZ-09,"Discounter; may buy grey imports, so customs raids are possible (§65)",Red + white,Small box canopy,Budget,P,,,,
+,BR-FUEL-07,Oceanic Petroleum,Океаник Петролеум,BIZ-09,Outer World import brand; appears when local refineries cannot supply,Dark blue + gold,Round classic canopy,Premium import,Any,,,,
+,BR-MART-01,PentaMart,ПентаМарт,BIZ-10,State or co-operative chain,Player colour + white,Long glass front,Standard,Any,,,,
+,BR-MART-02,FreshValley,Свежая Долина,BIZ-10,"Private chain from Sector 3, local food",Green + cream,"Wooden canopy, produce stalls",Standard,M,,,,
+,BR-MART-03,BudgetBasket,Экономкорзина,BIZ-10,Discounter,Yellow + red,Plain warehouse box,Budget,P,,,,
+,BR-MART-04,Gourmet Harbour,Гурмэ-Гавань,BIZ-10,Premium chain with imported goods,Black + gold,Stone arcade,Premium,R,,,,
+,BR-BANK-01,Pentapolis Savings Bank,Сберегательный банк Пентаполиса,BIZ-11,State-owned bank of the region,Player colour + grey,Columned portico,Standard,Any,,,,
+,BR-BANK-02,North Forge Bank,Банк «Северная кузня»,BIZ-11,"Private bank from Sector 1, industrial lending",Steel + red,Brick tower with clock,Standard,M,,,,
+,BR-BANK-03,Cape Capital,Кейп Кэпитал,BIZ-11,Private investment bank from Sector 5,White + teal,Glass cube,Premium,R,,,,
+,BR-BANK-04,People's Credit Union,Народная касса,BIZ-11,"Co-operative credit union, small loans",Blue + white,Shopfront office,Budget,P,,,,
+,,,,,,,,,,,,,
+,Player brands,"A firm that owns a refinery, a supermarket chain or a bank registers its own brand: name, two colours and one of six signature shapes. Its outlets show that brand, so the map shows who supplies whom.",,,,,,,,,,,

@@ -1,0 +1,37 @@
+,PENTAPOLIS: LOGISTICS HUBS & ROAD PHYSICS,,,MAX APEX FREIGHT,PEAK TRUCK WEAR,TOURIST INFLOW CAP,MAX DISPATCH RANGE,COMMUTER RELIABILITY
+,"Automated multi-tier freight hub progression, road wear physics & regional transit corridors",,,"14,000 t/hr",15.0x Multiplier,"76,500 /mo","3,500 km",96.5%
+,Tier 1–4 Freight Logistics • Pavement Degradation Dynamics • Passenger & Cross-Border Mobility,,,Seaport Lv.5 Peak Bulk Cap,Local Street Heavy Degradation,4 Multi-Modal Corridors,Air Freight Intercontinental,Express Passenger Rail Peak
+,Hub Type,Upgrade Level,Upgrade Cost ($),Max Cargo Throughput Capacity (tons/hr),Active Fleet Size,Dispatch Range / Radius (km),Monthly Operating Upkeep ($/mo)
+,Truck Fleet Depot,Lv.1 Local Dispatch Yard,0.0,150.0,6 Trucks,45.0,12000.0
+,Truck Fleet Depot,Lv.2 Expanded Logistics Yard,450000.0,380.0,14 Trucks,75.0,28000.0
+,Truck Fleet Depot,Lv.3 Automated Sorting Hub,1200000.0,850.0,28 Trucks,120.0,55000.0
+,Truck Fleet Depot,Lv.4 Regional Distribution Center,2500000.0,1600.0,50 Trucks,180.0,95000.0
+,Truck Fleet Depot,Lv.5 Autonomous Megadepot,4500000.0,2800.0,80 Trucks,250.0,150000.0
+,Rail Freight Terminal,Lv.1 Single-Track Rail Spur,750000.0,600.0,2 Trains,150.0,35000.0
+,Rail Freight Terminal,Lv.2 Dual-Track Passing Yard,1800000.0,1500.0,5 Trains,250.0,70000.0
+,Rail Freight Terminal,Lv.3 Automated Classification Yard,3600000.0,3200.0,10 Trains,400.0,130000.0
+,Rail Freight Terminal,Lv.4 Intermodal Gantry Terminal,6500000.0,5500.0,16 Trains,600.0,210000.0
+,Rail Freight Terminal,Lv.5 Apex Electrified Rail Hub,1.1E7,9000.0,25 Trains,900.0,320000.0
+,Deep-Water Cargo Seaport,Lv.1 Coastal Bulk Pier,2000000.0,1000.0,2 Cargo Barges,300.0,60000.0
+,Deep-Water Cargo Seaport,Lv.2 General Cargo Quay,4500000.0,2500.0,4 Coastal Freighters,600.0,120000.0
+,Deep-Water Cargo Seaport,Lv.3 Containerized Berth & Cranes,8500000.0,5000.0,8 Container Ships,1200.0,220000.0
+,Deep-Water Cargo Seaport,Lv.4 PanOceanic Deep Terminal,1.5E7,8500.0,14 Bulk Freighters,2000.0,380000.0
+,Deep-Water Cargo Seaport,Lv.5 Automated Maritime Megaport,2.4E7,14000.0,22 Heavy Freighters,3000.0,580000.0
+,Air Freight Cargo Airport,Lv.1 Turboprop Cargo Airstrip,3000000.0,400.0,3 Turboprop Freighters,500.0,80000.0
+,Air Freight Cargo Airport,Lv.2 Regional Air Cargo Facility,6500000.0,1100.0,6 Regional Cargo Jets,1000.0,160000.0
+,Air Freight Cargo Airport,Lv.3 International Express Air Hub,1.25E7,2600.0,12 Express Cargo Jets,1800.0,290000.0
+,Air Freight Cargo Airport,Lv.4 High-Velocity Cargo Terminal,2.1E7,4800.0,20 Widebody Freighters,2600.0,460000.0
+,Air Freight Cargo Airport,Lv.5 Global Aerotropolis Superhub,3.2E7,8000.0,30 Jumbo Freighters,3500.0,690000.0
+,Cumulative / Network Portfolio,20 Logistics Tiers,161300000,73480,349 Dispatched Units,3500,4145000
+,Road Classification,Speed Limit (km/h),Max Traffic Capacity (vehicles/hr),Construction Cost ($/km),Monthly Maintenance Base ($/km/mo),Heavy Truck Wear Multiplier (vs Cars),Monthly Road Degradation Rate under Heavy Freight (%),Speed Penalty at <40% Road Health (%)
+,2-Lane Local Street,50.0,1200.0,180000.0,1400.0,15.0,0.085,-0.45
+,4-Lane Avenue,70.0,3200.0,420000.0,2800.0,12.0,0.052,-0.35
+,6-Lane Expressway / Highway,110.0,7500.0,950000.0,5600.0,9.0,0.034,-0.25
+,Reinforced Industrial Heavy Bypass,80.0,5000.0,1350000.0,4200.0,3.5,0.012,-0.12
+,Road Network Average / Benchmark,77.5,4225,725000,3500,9.875,0.04575,-0.2925
+,Transit Mode,Passenger Capacity per Trip (passengers),Infrastructure Prerequisite,Cross-Border Tourist Volume Generated (tourists/mo),Commuter Travel Time Reliability Index (%),Revenue Yield per Passenger-km ($)
+,Intercity Passenger Bus,55.0,Paved Road & Customs Border Post (KPP),8500.0,0.785,0.14
+,International Express Passenger Train,450.0,Electrified Rail Corridor & Central Station,28000.0,0.965,0.22
+,Coastal/Deep-Sea Cruise Ferry,1200.0,Passenger Ferry Terminal & Deep Berth,16000.0,0.89,0.28
+,Regional Passenger Airline,160.0,International Passenger Airport & Customs Terminal,24000.0,0.935,0.45
+,Total Passenger Network / Fleet Benchmark,1865,4 Multi-Modal Corridors,76500,0.89375,0.2725

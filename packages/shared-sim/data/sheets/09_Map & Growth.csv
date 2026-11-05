@@ -1,0 +1,81 @@
+,"PENTAPOLIS: MAP, LAND BUDGET, CITY GROWTH AND MIGRATION",,,,,
+,"Checks the GDD promise 'a well-run sector is almost fully built within 1 game year (12 real days)'. Blue = input, green = link, black = formula. GDD §2.1, §2.4, §2.5, §6.7.",,,,,
+,,,,,,
+,SECTION 1: MAP CONSTANTS,,,,,
+,Parameter,Value,Unit,Note,,
+,Tile size,10.0,m,1 tile = 10 x 10 m,,
+,Grid,1000.0,tiles per side,1000 x 1000 tiles = 10 x 10 km,,
+,Land per sector (target),90000.0,tiles,"About 9 km2 each, equal within 5%; the peninsula outline follows the map scheme but sector areas are equalised",,
+,Central Core diameter,120.0,tiles,Neutral zone for megaprojects,,
+,Central Core area,11310,tiles,,,
+,Land on the peninsula,461310,tiles,,,
+,Share of the grid that is land,0.46131,,The rest is sea and the mainland strip in the north,,
+,,,,,,
+,SECTION 2: SECTORS AND ENTRY POINTS,,,,,
+,Sector,Position on scheme,Profile,Entry from the Outer World,Coast,River
+,S1,North-west,Iron ore and coal,"Ground road No. 1 (north border, 2 lanes)",West coast,Own loop
+,S2,North-east,Crude oil and natural gas,"Ground road No. 2 (north border, 2 lanes)",North-east coast,Own loop
+,S3,South-west,Grain and timber,Tunnel No. 1 near the Core (2 lanes),South-west coast,Own loop
+,S4,South,"Limestone, granite, hydro",Tunnel No. 2 near the Core (2 lanes),South coast,Own loop
+,S5,East cape,"Quartz sand, microelectronics, hydro",Tunnel No. 3 near the Core (2 lanes),Sea on three sides,Through-flowing river
+,,,,,,
+,SECTION 3: LAND BUDGET OF ONE SECTOR AT GAME MONTH 12,,,,,
+,Item,Input,Tiles,Note,,
+,Households in the region (target),55000.0,,"Peninsula base 275,000 / 5",,
+,Citizens per household,2.2,,,,
+,Share of citizens in low density,0.1,,,,
+,Share of citizens in medium density,0.5,,,,
+,Share of citizens in high density,0.4,,,,
+,Residential land,,32435.44974,Citizens / citizens per tile (Zoning sheet),,
+,Service and office jobs in the region,24300.0,,45% of the labour supply (Demand & Labour Bridge),,
+,Commercial and office land,,10894.5,"Mix: 30% small shops, 30% supermarkets, 10% malls, 20% office blocks, 10% towers",,
+,Industrial and extraction plants (count),43.0,,"20 Tier 1, 12 Tier 2, 8 Tier 3, 3 Tier 4 at average Lv.3",,
+,Industrial land,,14466,Average footprints from the Building Catalog,,
+,"Public services, parks, utilities",,6543.544974,"60 tiles per 1,000 households plus parks at 10% of residential land",,
+,"Logistics and energy (port, depots, stations, power, water)",,4000.0,"A passenger airport adds about 8,800 tiles at S3+",,
+,Roads and rail (share of built land),0.25,,,,
+,Total built land,,85424.36839,,,
+,Share of the sector built at month 12,,0.9491596487,"Target 85-100%: the land fills up, and further growth needs higher density",,
+,Maximum households if the whole sector is built at this mix,,57945.99473,,,
+,,,,,,
+,SECTION 4: GROWTH CURVE OF A WELL-RUN CITY (1 game month = 1 real day),,,,,
+,Parameter,Value,Note,,,
+,Households at saturation,60000.0,Logistic ceiling for this land and mix,,,
+,Growth rate k,1.0,Per game month,,,
+,Mid-point month,6.5,Month of fastest growth,,,
+,Game Month,Households,New Households in the Month,Arrivals per Game Hour,Tiles Built per Real Day,Development Stage
+,0.0,90,90,0.125,139.7853301,S0
+,1.0,244,154,0.2138888889,239.1882315,S0
+,2.0,659,415,0.5763888889,644.5656887,S0
+,3.0,1759,1100,1.527777778,1708.487368,S1
+,4.0,4551,2792,3.877777778,4336.451573,S1
+,5.0,10946,6395,8.881944444,9932.524288,S2
+,6.0,22652,11706,16.25833333,18181.41193,S3
+,7.0,37348,14696,20.41111111,22825.39123,S3
+,8.0,49054,11706,16.25833333,18181.41193,S4
+,9.0,55449,6395,8.881944444,9932.524288,S5
+,10.0,58241,2792,3.877777778,4336.451573,S5
+,11.0,59341,1100,1.527777778,1708.487368,S5
+,12.0,59756,415,0.5763888889,644.5656887,S5
+,,,,,,
+,Reading the curve,"The city starts with about 90 households (200 citizens). Growth peaks in months 6-8 at 12,000-15,000 households a month (up to 20 an hour). Stages: S1 at month 3, S2 at 5, S3 at 6, S4 at 8, S5 at 9, leaving about 3 weeks of the 30-day season for megaprojects. A 2-lane entry carries far more than 20 moving vans an hour, so entries limit freight, not migrants.",,,,
+,,,,,,
+,SECTION 5: HAPPINESS AND MIGRATION (GDD §6.7),,,,,
+,Factor,Weight,Score 0-100 Means,Source,,
+,Money: free income after essentials vs class floor,0.2,"0 below floor, 50 at floor, 100 at 3x floor","Demographics, Money Flow Model",,
+,Jobs: unemployment and hardship share,0.12,"100 at 3% or less, 0 at 20% or more",Demand & Labour Bridge,,
+,Housing: rent burden and vacancy,0.12,100 if rent < 25% of income and vacancy 3-6%,"Regional model, zoning",,
+,Safety: crime coverage by police,0.1,"Share of homes inside police radius, minus crime rate",SAF-01,,
+,"Health: clinics and hospitals coverage, pollution exposure",0.1,Coverage minus smog and dirty water penalties,"HLT-01/02, pollution",,
+,"Education: kindergarten, school and college places",0.08,Places per child of each age,EDU-01..04,,
+,"Environment: air, water, noise, parks",0.08,Land value modifiers of nearby buildings,Catalog land value effects,,
+,Transport: commute time and public transport,0.08,"100 under 20 game minutes, 0 over 90","Traffic, TRN-*",,
+,"Utilities: blackouts, water and gas cuts",0.06,100 with no outages in the last game month,City Systems,,
+,Leisure: venues of own class within reach,0.04,"Venues per 1,000 households of the class",LEI-*,,
+,"Policy: taxes vs neighbours, benefits, decrees",0.02,Relative tax burden and active decrees,Mayor Levers,,
+,Total weight,1,,,,
+,Happiness index H,"Weighted average of the 11 scores, recalculated per household class every tactical tick and averaged daily",,,,
+,Immigration (households per game month),Base inflow from the growth curve x (H/70)^2 x free housing factor x free jobs factor; zero if H < 35,,,,
+,Emigration (households per game month),Households x 1.5% x ((50 - H)/50)^1.5 when H < 50; class-specific: elite leave first when quality and safety fall,,,,
+,Between regions,A household compares H and real wage at the current exchange rate with the 4 neighbours; up to 0.5% of households a month move to the best one if the gap exceeds 10 points,,,,
+,Calibration rule,A city at H = 70 follows the growth curve above; at H = 50 it grows at half speed; below 40 it shrinks,,,,

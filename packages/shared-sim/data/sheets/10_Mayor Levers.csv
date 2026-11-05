@@ -1,0 +1,65 @@
+,"PENTAPOLIS: MAYOR'S LEVERS (TAXES, PROGRAMMES, DECREES, CENTRAL BANK)",,,,,
+,"Every lever the mayor controls, with default, allowed range, who pays and what it changes. Defaults match the Money Flow Model and the five-region model. GDD §3.4.",,,,,
+,,,,,,
+,SECTION 1: TAXES AND FEES,,,,,
+,Lever,Default,Min,Max,Base / Who Pays,Effect and Notes
+,Personal income tax: workers,0.12,0.0,0.4,Wages of workers,Higher rate lowers free income and the Money factor of happiness
+,Personal income tax: engineers,0.18,0.0,0.45,Wages of engineers and specialists,Engineers migrate first if taxed above neighbours
+,Personal income tax: elite,0.24,0.0,0.5,Wages and dividends of the elite,Elite compare after-tax income with all 4 neighbours
+,VAT,0.1,0.0,0.25,Consumption and new housing,Main revenue; above 15% raises shadow trade
+,Corporate profit tax,0.18,0.0,0.4,"Profits of firms, including the 90% private share of plants",Above the loan rate gap investors stop buying the 90% share
+,Property tax,0.3% a year,0.0,2% a year,Market value of homes and commercial property,Funds services; raises rent burden
+,Import duty (KPP and Outer World),0.06,0.0,1.0,Value of imported goods,Above 50% needs the Notice Window; above 25-30% starts smuggling
+,Export duty,0.01,0.0,0.3,Value of exported goods,Mostly used on Contour B raw materials
+,Excise: fuel,0.1,0.0,0.5,Fuel sales,"Lowers car use, raises bus use"
+,"Excise: alcohol, tobacco, gambling",0.15,0.0,0.6,"Bars, betting, casinos",Cuts gambling hardship; above 40% pushes venues to neighbours
+,Visa fee,$15 per crossing,$0,$200,Visitors and commuters at KPP,Part of tourism income
+,Tourist tax,$3 per night,$0,$20,Hotel and resort guests,Above $10 tourists choose another region
+,Concession royalty,0.15,0.05,0.3,Value of raw materials extracted on your land by a neighbour,Set per contract (12 game months)
+,,,,,,
+,SECTION 2: SOCIAL PROGRAMMES,,,,,
+,Programme,Default,Min,Max,Cost,Effect
+,Unemployment benefit,40% of previous wage,0.0,0.8,"Treasury, per household in hardship",Above 60% slows return to work
+,Pension,"$1,000 a month",20% of avg wage,80% of avg wage,"Treasury, per retiree",Indexed to inflation unless frozen (IMF condition)
+,Retirement age,65.0,60.0,70.0,-,Each +1 year cuts retirees by about 2% of working households
+,Funded pension contribution (NPF),0.0,0.0,0.1,Employees' wages,Builds a pension fund that pays later pensions
+,Child allowance,$0,$0,$300 per child a month,Treasury,Raises births (Young Family decree adds +30%)
+,Housing subsidy for workers,0% of rent,0.0,30% of rent,Treasury,Raises the Housing factor of poor districts
+,Retraining programme,Off,Off,On,$500 per participant,+10 pp monthly return from hardship to work
+,Free school meals,Off,Off,On,$20 per pupil a month,+5 to the Education factor
+,,,,,,
+,SECTION 3: BUSINESS PROGRAMMES,,,,,
+,Programme,Default,Min,Max,Cost,Effect
+,City share in new processing plants,0.1,0.1,1.0,Treasury pays its share of construction and upgrades,Rule 10% / 90%; city may finish a stalled plant alone
+,Tax holiday for new firms,0 months,0.0,24 game months,Lost profit tax,More firms open in new zones
+,Subsidised business credit,0 pp,0 pp,5 pp off the loan rate,Treasury pays the rate gap to banks,"Same effect as a lower key rate, but only for business and without inflation"
+,Investment grant,0% of capex,0.0,0.2,Treasury,Raises private interest in the 90% share
+,Small business micro-grants,$0,$0,"$20,000 per new outlet",Treasury,"Faster opening of shops, cafes, repair shops"
+,Export support,Off,Off,On,Refund of export duty and part of freight,Helps Tier 3-4 exports to neighbours and the Outer World
+,,,,,,
+,SECTION 4: CITY INITIATIVES,,,,,
+,Initiative,Cost,Duration,Effect,,
+,Festival and tourism campaign,$1M per event,3 game days,+20% tourists for a month,,
+,"Beautification (squares, lighting, facades)",$200k per district,Permanent while funded,+10% land value in the district,,
+,Smart traffic lights,$300k per 10 junctions,Permanent,-15% congestion on covered roads,,
+,Tree planting and green roofs,$100k per district,Permanent,"+5 to Environment, -5% smog",,
+,Night safety patrols,$50k a month,While funded,-10% crime in covered districts,,
+,,,,,,
+,SECTION 5: CITY DECREES (GDD §6.6),,,,,
+,Decree,Monthly Cost,Effect,Side Effect,,
+,1. Free municipal transport,Fare income lost,-30% cars on roads,Treasury loses fare income,,
+,2. Mandatory waste sorting,Small,+20% recyclables,Slightly higher household costs,,
+,3. Home gasification subsidy,Treasury per home,+25% air quality,Higher gas demand,,
+,4. Night curfew and casino limits,None,-25% crime and gambling hardship,Leisure income and excise fall,,
+,5. Fire safety standard,None,"-40% fires, -20% insurance price",Construction costs +5%,,
+,6. Tax holidays for technoparks,Lost profit tax,Quality up to 4-5 stars,Less tax income,,
+,7. Young Family programme,Treasury per birth,+30% births,Higher kindergarten demand,,
+,8. Truck weight control,Small,-25% road wear,Freight slower and dearer,,
+,,,,,,
+,SECTION 6: CENTRAL BANK TOOLS,,,,,
+,Tool,Default,Range,Effect,,
+,Key rate,7% (advisor: Taylor rule),1% - 40%,Prices all bank loans and deposits; see Regional Money Model,,
+,Reserve requirement,0.05,0% - 20%,Limits loans per unit of deposits,,
+,CB purchases of city bonds,0% of new bonds,0% - 100%,Prints money; forbidden under an IMF programme,,
+,FX intervention,30% of pressure,0% - 100%,Uses reserves to smooth the exchange rate,,
+,Sovereign Wealth Fund,0% of export revenue,0% - 80%,"Keeps export income in WCU abroad, against an over-strong currency",,

@@ -1,0 +1,74 @@
+,"PENTAPOLIS: VEHICLE CATALOG (CIVILIAN, FREIGHT, MUNICIPAL, PUBLIC TRANSPORT, RAIL, SEA, AIR)",,,,,,,,,,,,,,,,,,,,,
+,"One row per vehicle type. Owner shows who buys and runs it; the mayor's treasury pays only for municipal, emergency and city public transport. Green = link, blue = input. GDD §87.",,,,,,,,,,,,,,,,,,,,,
+,ID,Name (EN),Название (RU),Class,Mode,Owner,Unlock Stage,Purchase Price ($; cars at retail = factory price x 1.28),Capacity,Capacity Unit,Speed (km/h),Fuel / Energy,Consumption per 100 km,"Running Cost ($/km, excl. fuel)",Crew,Service Life (game months),Road Wear (car = 1),Needs Infrastructure,Base / Depot (Building ID),Built From (Building ID),Emissions (0-3),Notes
+,CAR-01,Economy Car,Эконом-автомобиль,Private car,Road,Households (workers),S0,16000,4.0,passengers,120.0,Petrol,7 L,0.05,1.0,120.0,1.0,Any road,Home parking,ASM-02,2.0,Bought at BIZ-07 or BIZ-08 (§35)
+,CAR-02,Mid-Range Car,Автомобиль среднего класса,Private car,Road,Households (engineers),S1,28160,5.0,passengers,150.0,Petrol,8 L,0.07,1.0,150.0,1.0,Any road,Home parking,ASM-03,2.0,
+,CAR-03,Premium Car,Премиум-автомобиль,Private car,Road,Households (elite),S3,60160,5.0,passengers,200.0,Petrol,11 L,0.12,1.0,180.0,1.0,Any road,Home garage,ASM-04,2.0,Needs Luxury Goods in production
+,CAR-04,Used Car,Подержанный автомобиль,Private car,Road,"Households (workers, unemployed)",S0,6400,4.0,passengers,110.0,Petrol,9 L,0.09,1.0,60.0,1.0,Any road,Home parking,BIZ-08,3.0,Trade-in market (§35); higher breakdown chance
+,CAR-05,Electric Car,Электромобиль,Private car,Road,"Households (engineers, elite)",S3,33792,5.0,passengers,160.0,Electricity,16 kWh,0.04,1.0,150.0,1.0,"Any road, charger",Home or BIZ-09 premium station,ASM-03,0.0,Raises local power demand
+,MOTO-01,Scooter / Motorbike,Скутер / мотоцикл,Private two-wheeler,Road,Households (workers),S0,2500.0,2.0,passengers,90.0,Petrol,3 L,0.02,1.0,96.0,0.2,Any road,Home parking,ASM-02,2.0,Cheap first vehicle; congestion factor 0.3
+,TAXI-01,Taxi,Такси,Commercial car,Road,Private firms,S1,28160,4.0,passengers,140.0,Petrol,8 L,0.08,1.0,96.0,1.0,Any road,Taxi stand (commercial zone),ASM-03,2.0,Serves trips without a private car
+,VAN-01,Delivery Van,Развозной фургон,Light commercial,Road,Private firms,S0,28000.0,1.5,t,120.0,Diesel,10 L,0.1,1.0,96.0,5.0,Any road,"BIZ-03, LOG-06",ASM-01,2.0,Last-mile retail supply (§44)
+,TRK-01,Light Truck,Лёгкий грузовик,Truck,Road,Private firms,S0,55000.0,5.0,t,100.0,Diesel,18 L,0.18,1.0,120.0,200.0,Any road,LOG-01,ASM-01,2.0,
+,TRK-02,Heavy Truck (tractor + trailer),Тяжёлый грузовик с полуприцепом,Truck,Road,Private firms,S1,120000.0,25.0,t,90.0,Diesel,32 L,0.3,1.0,144.0,2500.0,"Avenue, expressway or industrial bypass",LOG-01,ASM-01,3.0,Price is per vehicle; the Heavy Transport Vehicles commodity unit is a component kit (see §79 price scale)
+,TRK-03,Fuel Tanker Truck,Бензовоз,Truck,Road,Private firms,S1,130000.0,30.0,m3,85.0,Diesel,34 L,0.32,1.0,144.0,2600.0,Avenue or industrial bypass,LOG-01,ASM-01,3.0,Supplies BIZ-09; spill risk on accidents
+,TRK-04,Bulk Tipper Truck,Самосвал для навалочных грузов,Truck,Road,Private firms,S0,110000.0,30.0,t,80.0,Diesel,35 L,0.3,1.0,120.0,2800.0,Industrial bypass preferred,LOG-01,ASM-01,3.0,"Ore, coal, stone, grain"
+,TRK-05,Container Truck,Контейнеровоз,Truck,Road,Private firms,S2,125000.0,26.0,t (1 TEU),90.0,Diesel,32 L,0.3,1.0,144.0,2500.0,Avenue or expressway,"LOG-01, LOG-04",ASM-01,3.0,Port and rail container transfers
+,TRK-06,Refrigerated Truck,Рефрижератор,Truck,Road,Private firms,S1,135000.0,20.0,t,90.0,Diesel,36 L,0.34,1.0,120.0,2200.0,Avenue or expressway,LOG-01,ASM-01,3.0,Food and pharmacy supply
+,TRK-07,Car Transporter,Автовоз,Truck,Road,Private firms,S3,140000.0,8.0,cars,85.0,Diesel,34 L,0.32,1.0,144.0,2400.0,Avenue or expressway,LOG-01,ASM-01,3.0,Car plants to dealerships
+,TRK-08,Cement Mixer Truck,Автобетоносмеситель,Truck,Road,Private firms,S1,115000.0,9.0,m3,70.0,Diesel,40 L,0.35,1.0,120.0,3000.0,Any road (short trips),PRO-04,ASM-01,3.0,Feeds construction sites (§41)
+,TRK-09,Logging Truck,Лесовоз,Truck,Road,Private firms,S0,105000.0,30.0,t,75.0,Diesel,35 L,0.3,1.0,120.0,2700.0,Industrial bypass preferred,EXT-06,ASM-01,3.0,
+,TRK-10,Tow Truck,Эвакуатор,Service truck,Road,Private firms,S1,70000.0,1.0,vehicle,90.0,Diesel,20 L,0.2,1.0,120.0,300.0,Any road,BIZ-01,ASM-01,2.0,Clears breakdowns and accidents
+,MUN-01,Police Patrol Car,Патрульный автомобиль полиции,Emergency,Road,City treasury,S1,30976,4.0,officers,180.0,Petrol,10 L,0.1,2.0,96.0,1.0,Any road,SAF-01,ASM-03,2.0,Response time sets crime coverage
+,MUN-02,Police Van,Полицейский фургон,Emergency,Road,City treasury,S2,60000.0,8.0,officers,130.0,Diesel,14 L,0.14,2.0,96.0,6.0,Any road,SAF-01,ASM-01,2.0,"Riots, strikes, raids"
+,MUN-03,Ambulance,Скорая помощь,Emergency,Road,City treasury,S1,90000.0,2.0,patients,140.0,Diesel,14 L,0.15,2.0,96.0,6.0,Any road,"HLT-01, HLT-02",ASM-01,2.0,Response time affects mortality
+,MUN-04,Fire Engine,Пожарная машина,Emergency,Road,City treasury,S1,350000.0,6.0,firefighters,110.0,Diesel,45 L,0.4,6.0,180.0,1500.0,Any road,SAF-02,ASM-01,3.0,Lowers fire insurance multiplier (§70)
+,MUN-05,Aerial Ladder Truck,Пожарная автолестница,Emergency,Road,City treasury,S3,700000.0,4.0,firefighters,90.0,Diesel,50 L,0.45,4.0,180.0,1800.0,Any road,SAF-02,ASM-01,3.0,Required for high-rise fire cover
+,MUN-06,Garbage Truck,Мусоровоз,Municipal service,Road,City treasury,S0,160000.0,10.0,t of waste,60.0,Diesel,45 L,0.4,2.0,120.0,2000.0,Any road,"UTL-03, UTL-04",ASM-01,3.0,Collection coverage sets street cleanliness
+,MUN-07,Street Sweeper / Snow Plough,Подметально-уборочная машина,Municipal service,Road,City treasury,S1,140000.0,1.0,km per hour cleared,30.0,Diesel,30 L,0.3,1.0,120.0,800.0,Any road,INF-13,ASM-01,2.0,Winter speed penalty without it
+,MUN-08,Road Maintenance Truck,Машина дорожного ремонта,Municipal service,Road,City treasury,S0,120000.0,5.0,t of asphalt,70.0,Diesel,35 L,0.3,3.0,120.0,2200.0,Any road,INF-13,ASM-01,3.0,Repairs wear (§25)
+,MUN-09,Utility Repair Van,Аварийная служба коммунальных сетей,Municipal service,Road,City treasury,S0,45000.0,3.0,workers,110.0,Diesel,12 L,0.12,3.0,96.0,5.0,Any road,"UTL-01, UTL-02",ASM-01,2.0,"Fixes water, power and gas outages"
+,MUN-10,School Bus,Школьный автобус,Municipal service,Road,City treasury,S1,110000.0,40.0,pupils,90.0,Diesel,25 L,0.25,1.0,144.0,1200.0,Any road,EDU-02,ASM-01,2.0,Raises school reach in low-density areas
+,PT-02,City Bus,Городской автобус,Public transport,Road,Licensed private operators (city sets routes),S1,250000.0,90.0,passengers,70.0,Diesel,35 L,0.35,1.0,144.0,1500.0,TRN-01 bus stops,TRN-02,ASM-01,3.0,Routes lay themselves between stations (§87)
+,PT-03,Articulated Bus,Сочленённый автобус,Public transport,Road,Licensed private operators (city sets routes),S2,400000.0,150.0,passengers,65.0,Diesel,45 L,0.45,1.0,144.0,2000.0,"TRN-01 bus stops, avenues",TRN-02,ASM-01,3.0,
+,PT-04,Electric Bus,Электробус,Public transport,Road,Licensed private operators (city sets routes),S3,550000.0,90.0,passengers,70.0,Electricity,120 kWh,0.25,1.0,144.0,1500.0,"TRN-01 bus stops, charging at depot",TRN-02,ASM-01,0.0,
+,PT-05,Trolleybus,Троллейбус,Public transport,Road + overhead wire,City treasury,S2,450000.0,100.0,passengers,60.0,Electricity,150 kWh,0.25,1.0,180.0,1500.0,"TRN-03 overhead wire, TRN-01 stops",TRN-04,ASM-01,0.0,Overhead wire costs extra per km
+,PT-06,Tram,Трамвай,Public transport,Tram track,City treasury,S2,2500000.0,250.0,passengers,60.0,Electricity,350 kWh,0.4,1.0,300.0,0.0,"TRN-05 track, TRN-06 stops",TRN-07,ASM-01,0.0,"Track shares the street, no road wear"
+,PT-07,Metro Train (6 cars),Поезд метро (6 вагонов),Public transport,Metro,City treasury,S3,1.2E7,1200.0,passengers,80.0,Electricity,"2,500 kWh",0.8,1.0,360.0,0.0,"TRN-08 tunnel, TRN-09 stations",TRN-10,ASM-01,0.0,Highest capacity; tunnels are expensive
+,PT-08,Suburban Train,Пригородная электричка,Public transport,Rail,City treasury,S2,6000000.0,800.0,passengers,120.0,Electricity,"1,800 kWh",0.7,2.0,360.0,0.0,"INF-05 track, stations",LOG-09,ASM-01,0.0,Links suburbs and neighbouring regions
+,PAX-01,Intercity Coach,Междугородний автобус,Intercity passenger,Road,Private firms,S1,300000.0,55,passengers,100.0,Diesel,30 L,0.3,2.0,144.0,1600.0,Expressway preferred,LOG-08,ASM-01,3.0,
+,PAX-02,Intercity Train,Междугородний поезд,Intercity passenger,Rail,Private firms (rail operator),S2,1.5E7,450,passengers,160.0,Electricity,"2,000 kWh",0.9,4.0,360.0,0.0,INF-05 track,LOG-09,ASM-01,0.0,
+,PAX-03,High-Speed Train,Скоростной поезд,Intercity passenger,Rail,Private firms (rail operator),S4,4.0E7,600.0,passengers,300.0,Electricity,"4,000 kWh",1.5,4.0,360.0,0.0,TRN-11 high-speed track,LOG-09,ASM-01,0.0,
+,PAX-04,Ro-Ro Passenger Ferry,Пассажирский паром,Intercity passenger,Water,Private firms,S2,3.0E7,1200,passengers,35.0,Marine diesel,900 L,3.0,20.0,480.0,0.0,Coast,LOG-10,Outer World or ASM-01,3.0,Also carries cars and trucks
+,PAX-05,Regional Airliner,Региональный самолёт,Intercity passenger,Air,Private firms,S3,3.5E7,160,passengers,650.0,Jet fuel,"2,500 L",6.0,5.0,480.0,0.0,Airport,LOG-11,Outer World,3.0,Bought from the Outer World
+,PAX-06,Long-Haul Jet,Дальнемагистральный самолёт,Intercity passenger,Air,Private firms,S4,1.5E8,350.0,passengers,900.0,Jet fuel,"6,000 L",12.0,12.0,480.0,0.0,Airport Lv.3+,LOG-11,Outer World,3.0,Brings rich tourists (§46)
+,RAIL-01,Bulk Hopper Train,Поезд с хопперами (навалочный),Freight train,Rail,Private firms,S1,6000000.0,1800.0,t,80.0,Diesel or electric,"1,500 L",0.8,2.0,360.0,0.0,INF-05 track,LOG-02,ASM-01,2.0,"Ore, coal, grain, stone"
+,RAIL-02,Tank Train,Наливной поезд (цистерны),Freight train,Rail,Private firms,S1,6500000.0,1600.0,t,80.0,Diesel or electric,"1,500 L",0.85,2.0,360.0,0.0,INF-05 track,LOG-02,ASM-01,2.0,Crude oil and fuel
+,RAIL-03,Container Train,Контейнерный поезд,Freight train,Rail,Private firms,S2,7000000.0,80.0,TEU,100.0,Diesel or electric,"1,600 L",0.9,2.0,360.0,0.0,INF-05 track,"LOG-02, LOG-04",ASM-01,2.0,
+,RAIL-04,Mixed Freight Train,Сборный грузовой поезд,Freight train,Rail,Private firms,S1,5500000.0,1200.0,t,90.0,Diesel or electric,"1,400 L",0.8,2.0,360.0,0.0,INF-05 track,LOG-02,ASM-01,2.0,"Steel, lumber, machinery, prefabs"
+,SHIP-01,Coastal Bulk Freighter,Каботажный балкер,Ship,Water,Private firms,S0,8000000.0,3000.0,t,25.0,Marine diesel,"1,200 L",2.0,12.0,480.0,0.0,Coast,LOG-03,Outer World,3.0,Starter sea freight
+,SHIP-02,Container Ship,Контейнеровоз,Ship,Water,Private firms,S2,6.0E7,2000.0,TEU,35.0,Marine diesel,"4,000 L",6.0,20.0,480.0,0.0,Deep-water port,LOG-04,Outer World,3.0,
+,SHIP-03,Oil Tanker,Нефтяной танкер,Ship,Water,Private firms,S2,7.0E7,80000.0,t,28.0,Marine diesel,"4,500 L",6.0,25.0,480.0,0.0,Deep-water port,LOG-04,Outer World,3.0,Spill risk (ecology claim §72)
+,SHIP-04,LNG Carrier,Газовоз СПГ,Ship,Water,Private firms,S3,1.8E8,140000.0,m3 LNG,35.0,Boil-off gas,"5,000 L",8.0,25.0,480.0,0.0,INF-10 terminal,INF-10,Outer World,2.0,
+,SHIP-05,Harbour Tug,Портовый буксир,Ship,Water,Private firms,S2,4000000.0,1.0,ship assisted,20.0,Marine diesel,300 L,1.0,5.0,480.0,0.0,Port,LOG-04,Outer World,2.0,Required per 4 berths
+,SHIP-06,Private Yacht,Частная яхта,Leisure craft,Water,Households (elite),S3,2500000.0,12.0,guests,40.0,Marine diesel,200 L,0.8,3.0,240.0,0.0,Marina,LEI-12,Outer World,2.0,Status good for elite (§75)
+,SHIP-07,Patrol and Customs Boat,Патрульно-таможенный катер,Emergency,Water,City treasury,S2,3000000.0,8.0,officers,60.0,Marine diesel,250 L,1.2,6.0,240.0,0.0,Coast,"LOG-03, LOG-04",Outer World,2.0,Catches sea contraband (§65)
+,AIR-01,Cargo Plane,Грузовой самолёт,Aircraft,Air,Private firms,S3,8.0E7,100.0,t,800.0,Jet fuel,"5,000 L",10.0,4.0,480.0,0.0,Cargo airport,LOG-05,Outer World,3.0,Microchips and luxury exports
+,AIR-02,Business Jet,Бизнес-джет,Aircraft,Air,"Households (elite), firms",S4,4.0E7,12.0,passengers,850.0,Jet fuel,"1,200 L",8.0,3.0,480.0,0.0,Airport,LOG-11,Outer World,3.0,Elite status good
+,AIR-03,Air Ambulance Helicopter,Санитарный вертолёт,Emergency,Air,City treasury,S3,9000000.0,2.0,patients,250.0,Jet fuel,300 L,4.0,3.0,360.0,0.0,Helipad at HLT-02,HLT-02,Outer World,2.0,Cuts response time across the region
+,AIR-04,Police Helicopter,Полицейский вертолёт,Emergency,Air,City treasury,S3,8000000.0,4.0,officers,250.0,Jet fuel,300 L,4.0,2.0,360.0,0.0,Helipad,SAF-01,Outer World,2.0,
+,,,,,,,,,,,,,,,,,,,,,,
+,SUMMARY,,,,,,,,,,,,,,,,,,,,,
+,Owner,Vehicle Types,,,,,,,,,,,,,,,,,,,,
+,Households (all classes),8,,,,,,,,,,,,,,,,,,,,
+,Private firms and licensed operators,31,,,,,,,,,,,,,,,,,,,,
+,City treasury,17,,,,,,,,,,,,,,,,,,,,
+,Mode,Vehicle Types,,,,,,,,,,,,,,,,,,,,
+,Road,33,,,,,,,,,,,,,,,,,,,,
+,Rail,7,,,,,,,,,,,,,,,,,,,,
+,Tram track,1,,,,,,,,,,,,,,,,,,,,
+,Metro,1,,,,,,,,,,,,,,,,,,,,
+,Water,8,,,,,,,,,,,,,,,,,,,,
+,Air,6,,,,,,,,,,,,,,,,,,,,
+,Vehicle types that need a building not yet in the catalog,0,,,,,,,,,,,,,,,,,,,,
+,Total vehicle types,56,,,,,,,,,,,,,,,,,,,,

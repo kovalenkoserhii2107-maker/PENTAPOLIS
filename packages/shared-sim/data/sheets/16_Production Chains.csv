@@ -1,0 +1,30 @@
+,PENTAPOLIS: PRODUCTION CHAINS,,,TOTAL COMMODITIES,AVG CYCLE TIME,AVG BASE VALUE,PEAK VALUE YIELD,MIN VALUE YIELD,HEAVY INDUSTRY BOOST,,"MIN MARGIN, TIERS 2-4",NEGATIVE-MARGIN GOODS
+,"Comprehensive multi-tier commodity catalog, processing chains, base economics & transport modes",,,24,49.45833333,3939.583333,18800,80,+40% Out / -25% Cost,,0.1968,0
+,Macro Economic Simulation Model • 4 Production Tiers • 24 Active Game Goods,,,Tiers 1 to 4 active,seconds per cycle,baseline market price,max gross $/min,base resource floor,Gas synergy multiplier,,must stay above 0%,must be 0
+,,,,,,,,,
+,Resource Name,Tier,Required Input Materials,Processing Facility,Transport Mode Required,Base Value = World Reference Price ($/unit),Production Cycle (seconds),"Gross Sales per Real Minute, Lv.1 ($)",Gas Synergy & Heavy Industry Boost,Accounting Unit,"Output per Game Hour, Lv.1 (units)",Material Input Cost per Unit ($),Value Added per Unit ($),Value Added Margin (%),"Value Added per Game Hour, Lv.1 ($)"
+,Iron Ore,Tier 1,None (Raw Deposit),Open-Pit Iron Mine,"Heavy Rail, Cargo Ship",40.0,15.0,160,None (Raw Mineral Deposit),t,8,0.0,40,1,320
+,Coal,Tier 1,None (Raw Deposit),Deep Shaft Colliery,"Heavy Rail, Cargo Ship",30.0,12.0,150,Dual-Fuel Smelting Alternative,t,10,0.0,30,1,300
+,Crude Oil,Tier 1,None (Offshore Deposit),Offshore Drilling Rig,"Pipeline, Cargo Ship",65.0,20.0,195,Shared Offshore Basin Infrastructure,t,6,0.0,65,1,390
+,Limestone & Granite,Tier 1,None (Rock Quarry),Stone Quarry Works,"Road Truck, Heavy Rail",25.0,10.0,150,None (Raw Quarry Excavation),t,12,0.0,25,1,300
+,Grain,Tier 1,None (Arable Land),Agricultural Plantation,"Road Truck, Heavy Rail",20.0,15.0,80,+25% Crop Yield via Synthetic Fertilizers,t,8,0.0,20,1,160
+,Timber,Tier 1,None (Softwood Forest),Logging Camp & Forestry,"Road Truck, Heavy Rail",35.0,18.0,116.6666667,None (Forestry Extraction),t,6.666666667,0.0,35,1,233.3333333
+,Natural Gas,Tier 1,None (Subsea Gas Well),Gas Extraction & Dehydration Rig,"Pipeline, LNG Tanker",55.0,15.0,220,Primary Catalyst (+40% Heavy Output / -25% Cost),"1,000 m3",8,0.0,55,1,440
+,Quartz & Silica Sand,Tier 1,None (Coastal Dune Deposit),Quartz Sand Works,"Road Truck, Heavy Rail",45.0,15.0,180,None (Raw Mineral Deposit); feedstock for Microchips and glass,t,8,0.0,45,1,360
+,Steel,Tier 2,2x Iron Ore + 1x Coal,Blast Furnace Mill,"Heavy Rail, Cargo Ship",160.0,30.0,320,+40% Output / -25% Smelting Energy Cost,t,4,110,50,0.3125,200
+,Fuel & Plastics,Tier 2,2x Crude Oil,Petrochemical Refinery,"Pipeline, Road Truck",210.0,35.0,360,+30% Cracking Throughput & Low Flaring,t,3.428571429,130,80,0.380952381,274.2857143
+,Fertilizers & Polymers,Tier 2,2x Natural Gas,Chemical Synthesis Complex,"Road Truck, Heavy Rail, Pipeline",190.0,30.0,380,+50% Synthesis Yield via Direct Methane Feedstock • Input for Consumer Goods + +35% Yield Booster for Grain Farms (§97.1),t,4,110,80,0.4210526316,320
+,Cement,Tier 2,2x Limestone & Granite + 1x Coal,Cement Kiln Works,"Road Truck, Heavy Rail",120.0,25.0,288,+35% Thermal Efficiency (Gas Kiln Firing),t,4.8,80,40,0.3333333333,192
+,Flour & Food,Tier 2,2x Grain,Grain Mill & Food Plant,"Road Truck, Cargo Ship",85.0,20.0,255,+15% Baking & Drying Thermal Efficiency,pallet (100 kg),6,40,45,0.5294117647,270
+,Lumber,Tier 2,2x Timber,Industrial Sawmill,"Road Truck, Heavy Rail",110.0,22.0,300,+20% Kiln Wood Drying Cycle Speed,t,5.454545455,70,40,0.3636363636,218.1818182
+,Industrial Machinery,Tier 3,2x Steel + 1x Lumber,Heavy Machinery Plant,"Heavy Rail, Cargo Ship",580.0,60.0,580,+30% Precision High-Heat Forging Speed,machine,2,430,150,0.2586206897,300
+,Microchips,Tier 3,1x Fuel & Plastics + 2x Quartz & Silica Sand,Semiconductor Fab,"Road Truck, Cargo Ship",850.0,75.0,680,+20% Ultra-Clean High-Temp Wafer Annealing,batch,1.6,300,550,0.6470588235,880
+,Consumer Goods,Tier 3,1x Fuel & Plastics + 1x Flour & Food + 1x Fertilizers & Polymers,Consumer Assembly Plant,"Road Truck, Cargo Ship",420.0,45.0,560,+15% Assembly Plant Energy Efficiency,pallet (100 kg),2.666666667,295,125,0.2976190476,333.3333333
+,Construction Prefabs,Tier 3,2x Cement + 1x Steel,Modular Prefab Factory,"Heavy Rail, Road Truck",510.0,50.0,612,+30% Autoclaved Aerated Curing Speed,module,2.4,400,110,0.2156862745,264
+,Auto Components & Engines,Tier 3,2x Steel + 1x Industrial Machinery + 1x Microchips,Auto Components & Engine Plant,"Road Truck, Heavy Rail",2300.0,55.0,2509.090909,+20% Precision Casting with Gas Heat Treatment,set,2.181818182,1750,550,0.2391304348,1200
+,Heavy Transport Vehicles,Tier 4,2x Industrial Machinery + 2x Microchips + 1x Steel,Automotive & Rail Foundry,"Heavy Rail, Cargo Ship",3800.0,120.0,1900,+35% Foundry Casting & Heat-Treatment Efficiency,vehicle,1,3020,780,0.2052631579,780
+,Economy Car,Tier 4,4x Auto Components + 2x Fuel & Plastics + 1x Consumer Goods,Compact Car Assembly Line,"Car Carrier Truck, Ro-Ro Ship",12500.0,90.0,8333.333333,+15% Paint Shop Curing with Gas,car,1.333333333,10040,2460,0.1968,3280
+,Mid-Range Car,Tier 4,6x Auto Components + 3x Fuel & Plastics + 3x Consumer Goods + 1x Microchips,Family Car Assembly Plant,"Car Carrier Truck, Ro-Ro Ship",22000.0,110.0,12000,+15% Paint Shop Curing with Gas,car,1.090909091,16540,5460,0.2481818182,5956.363636
+,Premium Car,Tier 4,10x Auto Components + 4x Microchips + 2x Luxury Goods + 2x Lumber,Premium Car Atelier,"Car Carrier Truck, Ro-Ro Ship",47000.0,150.0,18800,+15% Clean Paint & Leather Workshop Climate,car,0.8,33420,13580,0.2889361702,10864
+,Luxury Goods,Tier 4,2x Microchips + 2x Consumer Goods + 1x Lumber,Luxury Tech Atelier,"Road Truck, Cargo Ship",3400.0,150.0,1360,+15% Clean Room & Atelier Climate Control,crate,0.8,2650,750,0.2205882353,600
+,Average / Portfolio Total,24 Goods,4 Tiers Interlinked,24 Production Lines,Multi-Modal Transport,3939.583333,49.45833333,2103.712121,Universal Peninsular Synergy Network,Mixed (see Units & Time),4.592604618,2891.041667,1048.541667,0.5482821302,1184.81241
