@@ -9,6 +9,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
+  BorderPostDto,
   BuildingDto,
   BusRouteDto,
   ChatMessageDto,
@@ -42,6 +43,7 @@ export class WorldDatabase {
     this.db.exec("PRAGMA synchronous = NORMAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.initSchema();
+    this.migrateSchema();
   }
 
   private initSchema(): void {
@@ -111,6 +113,32 @@ export class WorldDatabase {
         license_fee_monthly_minor TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS border_posts (
+        id TEXT PRIMARY KEY,
+        sector_a INTEGER NOT NULL,
+        sector_b INTEGER NOT NULL,
+        tile_x INTEGER NOT NULL,
+        tile_y INTEGER NOT NULL,
+        width INTEGER NOT NULL,
+        depth INTEGER NOT NULL,
+        sides_json TEXT NOT NULL,
+        pending_json TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS megaproject_stakes (
+        building_id TEXT NOT NULL,
+        sector_id INTEGER NOT NULL,
+        contributed_wcu_minor TEXT NOT NULL,
+        PRIMARY KEY (building_id, sector_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS equity_stakes (
+        building_id TEXT NOT NULL,
+        holder_sector INTEGER NOT NULL,
+        share REAL NOT NULL,
+        PRIMARY KEY (building_id, holder_sector)
+      );
+
       CREATE TABLE IF NOT EXISTS chat_messages (
         id TEXT PRIMARY KEY,
         timestamp_iso TEXT NOT NULL,
@@ -132,6 +160,19 @@ export class WorldDatabase {
         created_at_iso TEXT NOT NULL
       );
     `);
+  }
+
+  /** Additive column migrations for worlds created by older builds. */
+  private migrateSchema(): void {
+    const cols = new Set(
+      this.db.query<{ name: string }, []>("PRAGMA table_info(buildings)").all().map((c) => c.name)
+    );
+    if (!cols.has("upgrade_target_level")) {
+      this.db.exec("ALTER TABLE buildings ADD COLUMN upgrade_target_level INTEGER");
+    }
+    if (!cols.has("upgrade_progress")) {
+      this.db.exec("ALTER TABLE buildings ADD COLUMN upgrade_progress REAL NOT NULL DEFAULT 1");
+    }
   }
 
   public getJournalMode(): string {
@@ -266,6 +307,81 @@ export class WorldDatabase {
     this.db.query("DELETE FROM bus_routes WHERE sector_id = ?1").run(sectorId);
   }
 
+  public loadBorderPosts(): BorderPostDto[] {
+    return this.db
+      .query<
+        { id: string; sector_a: number; sector_b: number; tile_x: number; tile_y: number; width: number; depth: number; sides_json: string; pending_json: string },
+        []
+      >("SELECT * FROM border_posts ORDER BY id")
+      .all()
+      .map((r) => ({
+        id: r.id,
+        sectorA: r.sector_a as SectorId,
+        sectorB: r.sector_b as SectorId,
+        tileX: r.tile_x,
+        tileY: r.tile_y,
+        width: r.width,
+        depth: r.depth,
+        sides: JSON.parse(r.sides_json) as BorderPostDto["sides"],
+        pending: JSON.parse(r.pending_json) as BorderPostDto["pending"],
+      }));
+  }
+
+  public upsertBorderPost(p: BorderPostDto): void {
+    this.db
+      .query(`
+        INSERT INTO border_posts (id, sector_a, sector_b, tile_x, tile_y, width, depth, sides_json, pending_json)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ON CONFLICT(id) DO UPDATE SET sides_json = excluded.sides_json, pending_json = excluded.pending_json
+      `)
+      .run(p.id, p.sectorA, p.sectorB, p.tileX, p.tileY, p.width, p.depth, JSON.stringify(p.sides), JSON.stringify(p.pending));
+  }
+
+  public deleteBorderPost(id: string): void {
+    this.db.query("DELETE FROM border_posts WHERE id = ?1").run(id);
+  }
+
+  public loadMegaprojectStakes(): Array<{ buildingId: string; sectorId: SectorId; contributedWcuMinor: string }> {
+    return this.db
+      .query<{ building_id: string; sector_id: number; contributed_wcu_minor: string }, []>("SELECT * FROM megaproject_stakes")
+      .all()
+      .map((r) => ({ buildingId: r.building_id, sectorId: r.sector_id as SectorId, contributedWcuMinor: r.contributed_wcu_minor }));
+  }
+
+  public upsertMegaprojectStake(buildingId: string, sectorId: SectorId, contributedWcuMinor: string): void {
+    this.db
+      .query(`
+        INSERT INTO megaproject_stakes (building_id, sector_id, contributed_wcu_minor) VALUES (?1, ?2, ?3)
+        ON CONFLICT(building_id, sector_id) DO UPDATE SET contributed_wcu_minor = excluded.contributed_wcu_minor
+      `)
+      .run(buildingId, sectorId, contributedWcuMinor);
+  }
+
+  public loadEquityStakes(): Array<{ buildingId: string; holderSector: SectorId; share: number }> {
+    return this.db
+      .query<{ building_id: string; holder_sector: number; share: number }, []>("SELECT * FROM equity_stakes")
+      .all()
+      .map((r) => ({ buildingId: r.building_id, holderSector: r.holder_sector as SectorId, share: r.share }));
+  }
+
+  public upsertEquityStake(buildingId: string, holderSector: SectorId, share: number): void {
+    if (share <= 1e-9) {
+      this.db.query("DELETE FROM equity_stakes WHERE building_id = ?1 AND holder_sector = ?2").run(buildingId, holderSector);
+      return;
+    }
+    this.db
+      .query(`
+        INSERT INTO equity_stakes (building_id, holder_sector, share) VALUES (?1, ?2, ?3)
+        ON CONFLICT(building_id, holder_sector) DO UPDATE SET share = excluded.share
+      `)
+      .run(buildingId, holderSector, share);
+  }
+
+  public deleteStakesOfBuilding(buildingId: string): void {
+    this.db.query("DELETE FROM equity_stakes WHERE building_id = ?1").run(buildingId);
+    this.db.query("DELETE FROM megaproject_stakes WHERE building_id = ?1").run(buildingId);
+  }
+
   public loadBusRoutes(): BusRouteDto[] {
     const rows = this.db
       .query<
@@ -357,9 +473,15 @@ export class WorldDatabase {
       .query(`
         INSERT INTO zones (id, sector_id, zone_kind, x, y, width, depth, occupancy_ratio)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        ON CONFLICT(id) DO UPDATE SET occupancy_ratio = excluded.occupancy_ratio
+        ON CONFLICT(id) DO UPDATE SET
+          zone_kind = excluded.zone_kind,
+          occupancy_ratio = excluded.occupancy_ratio
       `)
       .run(z.id, z.sectorId, z.zoneKind, z.x, z.y, z.width, z.depth, z.occupancyRatio);
+  }
+
+  public deleteZone(id: string): void {
+    this.db.query("DELETE FROM zones WHERE id = ?1").run(id);
   }
 
   public loadBuildings(): BuildingDto[] {
@@ -378,6 +500,8 @@ export class WorldDatabase {
           construction_progress: number;
           city_equity_share: number;
           stalled_awaiting_private: number;
+          upgrade_target_level: number | null;
+          upgrade_progress: number;
         },
         []
       >("SELECT * FROM buildings")
@@ -396,6 +520,8 @@ export class WorldDatabase {
       constructionProgress: r.construction_progress,
       cityEquityShare: r.city_equity_share,
       stalledAwaitingPrivate: r.stalled_awaiting_private === 1,
+      upgradeTargetLevel: r.upgrade_target_level,
+      upgradeProgress: r.upgrade_progress,
     }));
   }
 
@@ -404,14 +530,17 @@ export class WorldDatabase {
       .query(`
         INSERT INTO buildings (
           id, catalog_id, sector_id, tile_x, tile_y, width, depth,
-          orientation_deg, level, construction_progress, city_equity_share, stalled_awaiting_private
+          orientation_deg, level, construction_progress, city_equity_share, stalled_awaiting_private,
+          upgrade_target_level, upgrade_progress
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         ON CONFLICT(id) DO UPDATE SET
           level = excluded.level,
           construction_progress = excluded.construction_progress,
           city_equity_share = excluded.city_equity_share,
-          stalled_awaiting_private = excluded.stalled_awaiting_private
+          stalled_awaiting_private = excluded.stalled_awaiting_private,
+          upgrade_target_level = excluded.upgrade_target_level,
+          upgrade_progress = excluded.upgrade_progress
       `)
       .run(
         b.id,
@@ -425,7 +554,9 @@ export class WorldDatabase {
         b.level,
         b.constructionProgress,
         b.cityEquityShare,
-        b.stalledAwaitingPrivate ? 1 : 0
+        b.stalledAwaitingPrivate ? 1 : 0,
+        b.upgradeTargetLevel ?? null,
+        b.upgradeProgress ?? 1
       );
   }
 

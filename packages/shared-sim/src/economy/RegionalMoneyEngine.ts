@@ -219,6 +219,8 @@ export interface RegionEconomyState {
   imf: ImfProgrammeState;
   levers: RegionPolicyLevers;
   factories: FactoryEquityProject[];
+  /** Intra-month double-entry rows queued for the current month's 7-column matrix (`SUM(row) == 0n`). */
+  pendingCustomRows: LedgerMatrixRow[];
   /** Asymmetric sector shares from Sheet 14 `Regional Balance` */
   readonly baseShares: {
     readonly householdsShare: number;
@@ -488,6 +490,7 @@ function createInitialRegionState(
     },
     levers: createDefaultLevers(preset),
     factories: [],
+    pendingCustomRows: [],
     baseShares: sh,
     lastReport: null,
   };
@@ -677,6 +680,169 @@ export class RegionalMoneyEngine {
 
   public addResourceConcession(contract: ResourceConcessionContract): void {
     this.concessions.push({ ...contract });
+  }
+
+  /**
+   * Appends (or merges by label) a custom 7-column `[HH, Fc, Fk, T, Banks, CB, World]` double-entry
+   * row into `sectorId`'s monthly ledger. Enforces `SUM(row) === 0n` and `CB === 0n` on the spot so
+   * no operation can ever introduce a single minor-unit discrepancy.
+   */
+  public bookLedgerEntry(sectorId: SectorId, row: LedgerMatrixRow): void {
+    const sum = row[1] + row[2] + row[3] + row[4] + row[5] + row[6] + row[7];
+    if (sum !== 0n) {
+      throw new Error(
+        `Ledger row "${row[0]}" in Sector ${sectorId} violates SUM(row) == 0n (got ${sum})`
+      );
+    }
+    if (row[6] !== 0n) {
+      throw new Error(
+        `Custom current/capital row "${row[0]}" cannot write directly to CB column (got ${row[6]})`
+      );
+    }
+    if (
+      row[1] === 0n &&
+      row[2] === 0n &&
+      row[3] === 0n &&
+      row[4] === 0n &&
+      row[5] === 0n &&
+      row[7] === 0n
+    ) {
+      return;
+    }
+    const reg = this.getRegion(sectorId);
+    const existingIdx = reg.pendingCustomRows.findIndex((r) => r[0] === row[0]);
+    if (existingIdx >= 0) {
+      const prev = reg.pendingCustomRows[existingIdx]!;
+      reg.pendingCustomRows[existingIdx] = [
+        row[0],
+        prev[1] + row[1],
+        prev[2] + row[2],
+        prev[3] + row[3],
+        prev[4] + row[4],
+        prev[5] + row[5],
+        0n,
+        prev[7] + row[7],
+      ];
+    } else {
+      reg.pendingCustomRows.push([...row]);
+    }
+  }
+
+  /**
+   * Eminent Domain 100% compensation when demolishing occupied residential housing (`T -> HH`):
+   * row `[+comp, 0n, 0n, -comp, 0n, 0n, 0n]`, `SUM(row) == 0n`.
+   */
+  public bookEminentDomainBuyout(
+    sectorId: SectorId,
+    compensationLocal: Money,
+    recipient: "HH" | "Fk" = "HH"
+  ): void {
+    if (compensationLocal <= 0n) return;
+    if (recipient === "HH") {
+      this.bookLedgerEntry(sectorId, [
+        "Eminent domain buyout (demolition)",
+        compensationLocal,
+        0n,
+        0n,
+        -compensationLocal,
+        0n,
+        0n,
+        0n,
+      ]);
+    } else {
+      this.bookLedgerEntry(sectorId, [
+        "Commercial eminent domain buyout",
+        0n,
+        0n,
+        compensationLocal,
+        -compensationLocal,
+        0n,
+        0n,
+        0n,
+      ]);
+    }
+  }
+
+  /**
+   * Books private developers' construction material imports (`Fk -> World`) and customs duties (`Fk -> T`).
+   */
+  public bookDeveloperMaterialImport(
+    sectorId: SectorId,
+    importSupplierCostLocal: Money,
+    customsDutyLocal: Money
+  ): void {
+    if (importSupplierCostLocal > 0n) {
+      this.bookLedgerEntry(sectorId, [
+        "Developer imported materials (Fk -> World)",
+        0n,
+        0n,
+        -importSupplierCostLocal,
+        0n,
+        0n,
+        0n,
+        importSupplierCostLocal,
+      ]);
+    }
+    if (customsDutyLocal > 0n) {
+      this.bookLedgerEntry(sectorId, [
+        "Developer material customs (Fk -> T)",
+        0n,
+        0n,
+        -customsDutyLocal,
+        customsDutyLocal,
+        0n,
+        0n,
+        0n,
+      ]);
+    }
+  }
+
+  /**
+   * Books 5-stage personal auto lifecycle flows (`HH -> Fc` local dealership/used/STO, `HH -> World` imported cars).
+   */
+  public bookAutoMarketFlows(params: {
+    sectorId: SectorId;
+    localAutoAndStoSpend: Money;
+    importedAutoSpend: Money;
+    scrapSteelCredit: Money;
+  }): void {
+    const { sectorId, localAutoAndStoSpend, importedAutoSpend, scrapSteelCredit } = params;
+    if (localAutoAndStoSpend > 0n) {
+      this.bookLedgerEntry(sectorId, [
+        "Auto dealerships, used lots & STO repairs",
+        -localAutoAndStoSpend,
+        localAutoAndStoSpend,
+        0n,
+        0n,
+        0n,
+        0n,
+        0n,
+      ]);
+    }
+    if (importedAutoSpend > 0n) {
+      this.bookLedgerEntry(sectorId, [
+        "Imported passenger cars (HH -> World)",
+        -importedAutoSpend,
+        0n,
+        0n,
+        0n,
+        0n,
+        0n,
+        importedAutoSpend,
+      ]);
+    }
+    if (scrapSteelCredit > 0n) {
+      this.bookLedgerEntry(sectorId, [
+        "Auto scrapyard steel recycling",
+        scrapSteelCredit,
+        -scrapSteelCredit,
+        0n,
+        0n,
+        0n,
+        0n,
+        0n,
+      ]);
+    }
   }
 
   /**
@@ -989,9 +1155,14 @@ export class RegionalMoneyEngine {
       1.0,
       PENINSULA_BASE.contourBStateShare + 0.70 * avgPlantCityShare
     );
+    const customRows = reg.pendingCustomRows.splice(0);
+    const extraFc = customRows.reduce((s, r) => s + r[2], 0n);
+    const extraTrev = customRows.reduce((s, r) => (r[4] > 0n ? s + r[4] : s), 0n);
+    const extraTexp = customRows.reduce((s, r) => (r[4] < 0n ? s - r[4] : s), 0n);
+
     const divT = mulRate(div, stateEquityEffective);
     const divH = div - divT;
-    const retained = after - div; // exact residual: ensures NL_Fc === 0n!
+    const retained = after - div + extraFc; // exact residual: ensures NL_Fc === 0n even with custom Fc rows!
 
     // ---- 6. Loan Defaults, Banks & Central Bank
     const mortDefAnnual =
@@ -1003,8 +1174,10 @@ export class RegionalMoneyEngine {
       Math.pow(rFirmEffective / 0.10, 1.5) *
       Math.max(0.5, 2 - worldCycle);
 
-    const writeMort = mulRate(reg.mortgages, Math.min(0.25, mortDefAnnual / 12));
-    const writeFirm = mulRate(reg.firmLoans, Math.min(0.25, firmDefAnnual / 12));
+    const writeMort =
+      reg.mortgages > 0n ? mulRate(reg.mortgages, Math.min(0.25, mortDefAnnual / 12)) : 0n;
+    const writeFirm =
+      reg.firmLoans > 0n ? mulRate(reg.firmLoans, Math.min(0.25, firmDefAnnual / 12)) : 0n;
     const WO = writeMort + writeFirm;
 
     const bintB = mulRate(reg.govBondsBanks, rBond / 12);
@@ -1065,9 +1238,9 @@ export class RegionalMoneyEngine {
     const dImfLocal = money(toUnits(dImfWcu) * fx);
 
     const trev =
-      PIT + PT + VAT + ctax + duties + visa + divT + cbProfit + royaltyReceivedIn;
+      PIT + PT + VAT + ctax + duties + visa + divT + cbProfit + royaltyReceivedIn + extraTrev;
     const texp =
-      Wt + G + PENS + subs + bintB + bintCB + emin + cityEquityCapex + imfInterestLocal;
+      Wt + G + PENS + subs + bintB + bintCB + emin + cityEquityCapex + imfInterestLocal + extraTexp;
 
     // ---- 8. Assemble Current & Capital Account Matrix Rows
     // Every row is constructed so sum(row) === 0n identically!
@@ -1115,6 +1288,7 @@ export class RegionalMoneyEngine {
       ["Retained profits", 0n, -retained, retained, 0n, 0n, 0n, 0n],
       ["Migrant savings", migrantSavings, 0n, 0n, 0n, 0n, 0n, -migrantSavings],
       ["Eminent domain compensation", emin, 0n, 0n, -emin, 0n, 0n, 0n],
+      ...customRows,
     ];
 
     // Net lending per column before financial account: [HH, Fc, Fk, T, Banks, CB, World]

@@ -19,7 +19,8 @@
     "typecheck:server": "tsc -p apps/server/tsconfig.json --noEmit",
     "typecheck:client": "tsc -p apps/client/tsconfig.json --noEmit",
     "export-sheets": "bun run tools/export-sheets.ts",
-    "sim:run36": "bun run packages/shared-sim/scripts/run36.ts"
+    "sim:run36": "bun run packages/shared-sim/scripts/run36.ts",
+    "sim:36m": "bun run packages/shared-sim/scripts/run36.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.1.18",

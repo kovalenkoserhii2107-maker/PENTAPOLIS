@@ -19,6 +19,7 @@ import { computeBuildingAtLevel, type BuildingCatalogEntry } from "../catalogs/b
 import type { SectorId } from "../catalogs/visuals.ts";
 import type { ExternalGatewayPoint } from "../map/PeninsulaGrid.ts";
 import { mulRate, type Money } from "../money/money.ts";
+import { commodityUnitTons } from "../construction/developerMarket.ts";
 import type {
   BuildingDto,
   BusRouteDto,
@@ -39,6 +40,7 @@ import {
   locateRectOnGraph,
   travelTimeCost,
   type EdgeLocation,
+  type GraphLink,
   type NetworkGraph,
   type RouteResult,
 } from "./roadGraph.ts";
@@ -130,19 +132,31 @@ const ZONE_SNAP_TILES = 8;
 const BUILDING_SNAP_TILES = 10;
 const GATEWAY_SNAP_TILES = 14;
 const EMPTY_RETURN_WEAR_SHARE = 0.12;
-const PCE: Readonly<Record<VehicleRole, number>> = { commuter: 1, freight: 2.5, bus: 2, metro: 0 };
+const PCE: Readonly<Record<VehicleRole, number>> = {
+  commuter: 1,
+  freight: 2.5,
+  bus: 2,
+  metro: 0,
+  service: 1.5,
+  emergency: 1.5,
+};
 
-/** Tons carried per accounting unit of non-tonnage commodities. */
-const UNIT_TONS: ReadonlyArray<readonly [RegExp, number]> = [
-  [/pallet/i, 0.1],
-  [/machine/i, 5],
-  [/batch/i, 0.2],
-  [/module/i, 8],
-  [/set/i, 0.5],
-  [/vehicle/i, 12],
-  [/car/i, 1.3],
-  [/crate/i, 0.3],
-];
+const SERVICE_COLORS: Readonly<Record<string, number>> = {
+  "MUN-01": 0x1d4ed8,
+  "MUN-02": 0x1d4ed8,
+  "MUN-03": 0xf8fafc,
+  "MUN-04": 0xdc2626,
+};
+
+/** Crew role of each municipal responder vehicle (Sprint 6 dispatch). */
+const RESPONDER_ROLE_RU: Readonly<Record<string, string>> = {
+  "MUN-01": "Полицейский патрульный",
+  "MUN-02": "Полицейский (ОМОН)",
+  "MUN-03": "Фельдшер скорой помощи",
+  "MUN-04": "Пожарный",
+  "MUN-06": "Водитель мусоровоза",
+  "MUN-09": "Аварийный монтёр",
+};
 
 function truckForCommodity(commodity: string): string {
   if (/ore|coal|limestone|grain|quartz/i.test(commodity)) return "TRK-04";
@@ -189,6 +203,43 @@ export interface TrafficModelInput {
   readonly gameHourOfDay: number;
   readonly version: number;
   readonly visibleCarBudget?: number;
+  /** Responder crews driving to emergencies (Sprint 6). */
+  readonly dispatches?: readonly ServiceDispatchInput[];
+  /** Road joints through border posts (Sprint 7). */
+  readonly links?: readonly GraphLink[];
+  /** Customs terms for cargo crossing a border post (Sprint 7); `null` when the post is unknown. */
+  readonly crossing?: (postId: string, from: SectorId, to: SectorId, commodity: string) => CrossingTerms | null;
+  /** Output multiplier of gasified plants (Sprint 7 gas network). */
+  readonly plantOutputMultiplier?: ReadonlyMap<string, number>;
+}
+
+export interface CrossingTerms {
+  readonly allowed: boolean;
+  readonly importDuty: number;
+  readonly exportDuty: number;
+  readonly smuggling: number;
+}
+
+/** Freight that crosses a border post: the customs base of both sides (Sprint 7). */
+export interface CrossBorderFlow {
+  readonly postId: string;
+  readonly fromSector: SectorId;
+  readonly toSector: SectorId;
+  readonly commodity: string;
+  readonly trucksPerHour: number;
+  /** World reference value of the cargo per game hour (WCU minor units). */
+  readonly valueWcuPerHour: Money;
+  readonly terms: CrossingTerms;
+}
+
+export interface ServiceDispatchInput {
+  readonly emergencyInstanceId: string;
+  readonly emergencyTitleRu: string;
+  readonly sectorId: SectorId;
+  readonly vehicleTypeId: string;
+  readonly buildingId: string;
+  readonly tileX: number;
+  readonly tileY: number;
 }
 
 export interface VehicleCargoRecord {
@@ -199,6 +250,8 @@ export interface VehicleCargoRecord {
   /** World reference price of the payload in WCU minor units. */
   readonly valueWcu: Money;
   readonly exportViaGateway: boolean;
+  /** Customs at a border post on the way to a neighbour's plant (Sprint 7). */
+  readonly border?: { readonly postId: string; readonly toSector: SectorId; readonly importDuty: number };
 }
 
 export interface VehicleAgentRecord {
@@ -225,6 +278,8 @@ export interface CitizenContext {
   readonly sectorId: SectorId;
   readonly classId: "workers" | "engineers" | "elite" | "retirees";
   readonly homeLabel: string;
+  /** Zone the citizen lives in, when they live in a zoned district. */
+  readonly homeZoneId: string | null;
   readonly homeX: number;
   readonly homeY: number;
   readonly workLabel: string;
@@ -245,6 +300,12 @@ export interface TrafficComputation {
   readonly citizens: ReadonlyMap<string, CitizenContext>;
   /** Health % lost per game hour, per road segment id. */
   readonly segmentWearPerHour: ReadonlyMap<string, number>;
+  /** Zones inside a working metro station's / licensed bus stop's service radius. */
+  readonly metroZoneIds: ReadonlySet<string>;
+  readonly busZoneIds: ReadonlySet<string>;
+  readonly crossBorderFlows: readonly CrossBorderFlow[];
+  /** Emergency instance IDs whose responder A* route hits congestion V/C > 1.2 or broken road < 40%. */
+  readonly congestedDispatches: ReadonlySet<string>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -270,11 +331,7 @@ function zoneCenter(z: ZoneDto): [number, number] {
   return [z.x + z.width / 2, z.y + z.depth / 2];
 }
 
-function unitTons(unit: string): number {
-  if (/^t\b|tons?/i.test(unit.trim())) return 1;
-  for (const [re, tons] of UNIT_TONS) if (re.test(unit)) return tons;
-  return 1;
-}
+const unitTons = commodityUnitTons;
 
 function vehicleIdFor(seed: string): string {
   return `VH-${(hashString(`veh:${seed}`) % 900_000) + 100_000}`;
@@ -347,7 +404,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
   const hour = ((Math.floor(input.gameHourOfDay) % 24) + 24) % 24;
   const hourShare = HOURLY_COMMUTE_PROFILE[hour]!;
   const sectorCtx = new Map(input.sectors.map((s) => [s.sectorId, s]));
-  const roadGraph = buildNetworkGraph(input.segments, "road");
+  const roadGraph = buildNetworkGraph(input.segments, "road", input.links ?? []);
   const metroGraph = buildNetworkGraph(input.segments, "metro");
   const roadCost = travelTimeCost();
 
@@ -672,8 +729,18 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
     readonly trucksPerHour: number;
     readonly commodity: string;
     readonly unit: string;
+    readonly border: CrossBorderFlow | null;
   }
   const freightFlows: FreightFlow[] = [];
+  const crossBorderFlows: CrossBorderFlow[] = [];
+  const postsOnRoute = (route: RouteResult): string[] => {
+    const ids: string[] = [];
+    for (const es of route.edgeShares) {
+      const linkId = roadGraph.edges[es.edgeId]!.linkId;
+      if (linkId && !ids.includes(linkId)) ids.push(linkId);
+    }
+    return ids;
+  };
   const gatewayPlaces = input.gateways.map<Place>((g) => ({
     key: `g:${g.id}`,
     label: g.labelRu,
@@ -689,7 +756,8 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
     if (!entry || !["EXT", "PRO", "CMP", "ASM"].includes(entry.prefix)) continue;
     if (/m3/i.test(entry.capacityUnit)) continue; // natural gas leaves by pipeline
     const stats = computeBuildingAtLevel(entry, catalogs.levelCurves, b.level);
-    const tonsPerHour = stats.capacity * unitTons(entry.capacityUnit);
+    const tonsPerHour =
+      stats.capacity * unitTons(entry.capacityUnit) * (input.plantOutputMultiplier?.get(b.id) ?? 1);
     if (tonsPerHour <= 0) continue;
     const truckTypeId = truckForCommodity(entry.mainOutput);
     const truck = catalogs.vehiclesById.get(truckTypeId);
@@ -707,10 +775,31 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
     let dest: Place | null = null;
     let route: RouteResult | null = null;
     let exportViaGateway = false;
+    let border: { postId: string; toSector: SectorId; terms: CrossingTerms } | null = null;
     for (const c of consumers) {
       route = routeBetween(roadGraph, origin, c);
       if (route) {
         dest = c;
+        break;
+      }
+    }
+    // Priority 2 (GDD §4.4): a neighbour's consumer plant through an open border post
+    if (!route && input.crossing) {
+      const foreign = operational
+        .filter((c) => c.sectorId !== b.sectorId && c.sectorId !== "core" && feeds.has(c.catalogId))
+        .map((c) => ({ c, place: buildingPlace(c, roadGraph, BUILDING_SNAP_TILES) }))
+        .filter((p) => p.place.loc)
+        .sort((p, q) => Math.hypot(p.place.x - origin.x, p.place.y - origin.y) - Math.hypot(q.place.x - origin.x, q.place.y - origin.y));
+      for (const { c, place } of foreign) {
+        const r = routeBetween(roadGraph, origin, place);
+        if (!r) continue;
+        const posts = postsOnRoute(r);
+        const fromSector = b.sectorId;
+        const terms = posts.map((pid) => input.crossing!(pid, fromSector, c.sectorId as SectorId, entry.mainOutput));
+        if (posts.length === 0 || terms.some((t) => !t || !t.allowed)) continue;
+        route = r;
+        dest = place;
+        border = { postId: posts[0]!, toSector: c.sectorId as SectorId, terms: terms[0]! };
         break;
       }
     }
@@ -727,6 +816,21 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
     if (!route || !dest) continue;
 
     const trucksPerHour = tonsPerHour / Math.max(1, truck.capacity * unitTons(truck.capacityUnit));
+    let borderFlow: CrossBorderFlow | null = null;
+    if (border) {
+      const recipe = catalogs.commoditiesByName.get(entry.mainOutput);
+      const unitsPerHour = tonsPerHour / unitTons(entry.capacityUnit);
+      borderFlow = {
+        postId: border.postId,
+        fromSector: b.sectorId,
+        toSector: border.toSector,
+        commodity: entry.mainOutput,
+        trucksPerHour,
+        valueWcuPerHour: recipe ? mulRate(recipe.worldReferencePrice, unitsPerHour) : 0n,
+        terms: border.terms,
+      };
+      crossBorderFlows.push(borderFlow);
+    }
     addFlow(route, trucksPerHour, truck.roadWearFactor, "freight");
     addFlow(route, trucksPerHour, truck.roadWearFactor * EMPTY_RETURN_WEAR_SHARE, "freight");
     add(sectorTruckTrips, b.sectorId, trucksPerHour * 2);
@@ -742,6 +846,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
       trucksPerHour,
       commodity: entry.mainOutput,
       unit: entry.capacityUnit.replace(/ per game hour/i, ""),
+      border: borderFlow,
     });
   }
 
@@ -889,6 +994,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
           sectorId: f.sectorId,
           classId,
           homeLabel: f.home.label,
+          homeZoneId: f.homeZone.id,
           homeX: f.home.x,
           homeY: f.home.y,
           workLabel: f.job.place.label,
@@ -908,7 +1014,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
 
   // Nearest home for drivers of trucks, buses and trains
   const homeFor = (sectorId: SectorId, x: number, y: number) => {
-    let best: { label: string; x: number; y: number; busCovered: boolean; metroCovered: boolean } | null = null;
+    let best: { label: string; zoneId: string | null; x: number; y: number; busCovered: boolean; metroCovered: boolean } | null = null;
     let bestD = Infinity;
     for (const z of input.zones) {
       if (z.sectorId !== sectorId || !z.zoneKind.startsWith("RES")) continue;
@@ -918,6 +1024,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
         bestD = d;
         best = {
           label: `Жилой квартал ${z.zoneKind} #${z.id}`,
+          zoneId: z.id,
           x: zx,
           y: zy,
           busCovered: coveredBy(operatingStops, sectorId, zx, zy),
@@ -926,7 +1033,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
       }
     }
     return (
-      best ?? { label: "Служебное общежитие при предприятии", x, y, busCovered: false, metroCovered: false }
+      best ?? { label: "Служебное общежитие при предприятии", zoneId: null, x, y, busCovered: false, metroCovered: false }
     );
   };
 
@@ -959,7 +1066,11 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
           ? `АО «${f.originEntry.nameRu}» (доля Мэрии ${Math.round(f.originBuilding.cityEquityShare * 100)}%)`
           : `Мэрия — Контур Б («${f.originEntry.nameRu}»)`,
         originLabel: f.origin.label,
-        destinationLabel: f.exportViaGateway ? `Экспорт: ${f.dest.label}` : f.dest.label,
+        destinationLabel: f.exportViaGateway
+          ? `Экспорт: ${f.dest.label}`
+          : f.border
+            ? `${f.dest.label} (Сектор ${f.border.toSector}, через КПП #${f.border.postId})`
+            : f.dest.label,
         cargo: {
           commodity: f.commodity,
           payload,
@@ -967,12 +1078,16 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
           unit: f.unit,
           valueWcu,
           exportViaGateway: f.exportViaGateway,
+          ...(f.border
+            ? { border: { postId: f.border.postId, toSector: f.border.toSector, importDuty: f.border.terms.importDuty } }
+            : {}),
         },
         passengers: null,
         citizen: {
           sectorId: f.sectorId,
           classId: "workers",
           homeLabel: home.label,
+          homeZoneId: home.zoneId,
           homeX: home.x,
           homeY: home.y,
           workLabel: f.origin.label,
@@ -1024,6 +1139,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
           sectorId: trip.route.sectorId,
           classId: "workers",
           homeLabel: home.label,
+          homeZoneId: home.zoneId,
           homeX: home.x,
           homeY: home.y,
           workLabel: `Автобусный парк #${depot.id}`,
@@ -1039,6 +1155,74 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
         rnd,
       });
     }
+  }
+
+  // Emergency responders with sirens, from their station to the incident
+  const vcBySegment = new Map(segmentTraffic.map((st) => [st.segmentId, st.volumeCapacityRatio]));
+  const congestedDispatches = new Set<string>();
+  for (const d of input.dispatches ?? []) {
+    const station = buildingById.get(d.buildingId);
+    if (!station) continue;
+    const from = buildingPlace(station, roadGraph, BUILDING_SNAP_TILES);
+    const to: Place = {
+      key: `emg:${d.emergencyInstanceId}`,
+      label: d.emergencyTitleRu,
+      sectorId: d.sectorId,
+      x: d.tileX,
+      y: d.tileY,
+      loc: locateOnGraph(roadGraph, d.tileX, d.tileY, 25),
+    };
+    const route = routeBetween(roadGraph, from, to);
+    if (!route) {
+      congestedDispatches.add(d.emergencyInstanceId);
+      continue;
+    }
+    const seed = `svc:${d.emergencyInstanceId}:${d.vehicleTypeId}`;
+    const rnd = seededRandom(seed);
+    const home = homeFor(d.sectorId, from.x, from.y);
+    const health = routeHealthStats(roadGraph, route);
+    let maxVcOnRoute = 0;
+    for (const es of route.edgeShares) {
+      if (es.share <= 0) continue;
+      const segId = roadGraph.edges[es.edgeId]!.segmentId;
+      maxVcOnRoute = Math.max(maxVcOnRoute, vcBySegment.get(segId) ?? 0);
+    }
+    if (maxVcOnRoute > 1.2 || health.min < 40) {
+      congestedDispatches.add(d.emergencyInstanceId);
+    }
+    emitVehicle({
+      seed,
+      role: "emergency",
+      vehicleTypeId: d.vehicleTypeId,
+      sectorId: d.sectorId,
+      layer: "surface",
+      graph: roadGraph,
+      route,
+      colorHex: SERVICE_COLORS[d.vehicleTypeId] ?? 0xdc2626,
+      ownerLabel: `Мэрия — ${from.label}`,
+      originLabel: from.label,
+      destinationLabel: `Выезд на ЧП: ${d.emergencyTitleRu}`,
+      cargo: null,
+      passengers: { onboard: 2 + Math.floor(rnd() * 3), capacity: catalogs.vehiclesById.get(d.vehicleTypeId)?.capacity ?? 4 },
+      citizen: {
+        sectorId: d.sectorId,
+        classId: d.vehicleTypeId === "MUN-03" ? "engineers" : "workers",
+        homeLabel: home.label,
+        homeZoneId: home.zoneId,
+        homeX: home.x,
+        homeY: home.y,
+        workLabel: from.label,
+        workRoleRu: RESPONDER_ROLE_RU[d.vehicleTypeId] ?? "Сотрудник городской службы",
+        workX: from.x,
+        workY: from.y,
+        commuteTiles: Math.hypot(home.x - from.x, home.y - from.y),
+        commuteMode: "driver",
+        commuteMinHealth: health.min,
+        busCovered: home.busCovered,
+        metroCovered: home.metroCovered,
+      },
+      rnd,
+    });
   }
 
   // Metro trains run underground (no road wear, no congestion)
@@ -1078,6 +1262,7 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
           sectorId: line.sectorId,
           classId: "engineers",
           homeLabel: home.label,
+          homeZoneId: home.zoneId,
           homeX: home.x,
           homeY: home.y,
           workLabel: `Метродепо #${depot.id}`,
@@ -1132,7 +1317,19 @@ export function computeTraffic(input: TrafficModelInput): TrafficComputation {
     };
   });
 
+  const metroZoneIds = new Set<string>();
+  const busZoneIds = new Set<string>();
+  for (const z of input.zones) {
+    const [zx, zy] = zoneCenter(z);
+    if (coveredBy(operatingStations, z.sectorId, zx, zy)) metroZoneIds.add(z.id);
+    if (coveredBy(operatingStops, z.sectorId, zx, zy)) busZoneIds.add(z.id);
+  }
+
   return {
+    metroZoneIds,
+    busZoneIds,
+    crossBorderFlows,
+    congestedDispatches,
     state: {
       version: input.version,
       gameHourOfDay: hour,
