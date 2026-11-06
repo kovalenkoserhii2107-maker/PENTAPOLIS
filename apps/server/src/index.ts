@@ -87,6 +87,8 @@ export function createPentapolisServer(
   const packedMapBytes = new Uint8Array(world.map.surface.length + world.map.owner.length);
   packedMapBytes.set(world.map.surface, 0);
   packedMapBytes.set(world.map.owner, world.map.surface.length);
+  // Revalidated on every load so clients never draw a stale map after the generator changes
+  const mapEtag = `"${Bun.hash(packedMapBytes).toString(16)}"`;
 
   const sendMsg = (ws: ServerWebSocket<{ connectedAt: number }>, msg: ServerMessage) => {
     ws.send(JSON.stringify(msg, (_k, v) => (typeof v === "bigint" ? v.toString() : v)));
@@ -166,13 +168,13 @@ export function createPentapolisServer(
       }
 
       if (url.pathname === "/api/map.bin" && req.method === "GET") {
+        const cacheHeaders = { ...CORS_HEADERS, ETag: mapEtag, "Cache-Control": "no-cache" };
+        if (req.headers.get("If-None-Match") === mapEtag) {
+          return new Response(null, { status: 304, headers: cacheHeaders });
+        }
         return new Response(packedMapBytes, {
           status: 200,
-          headers: {
-            ...CORS_HEADERS,
-            "Content-Type": "application/octet-stream",
-            "Cache-Control": "public, max-age=3600",
-          },
+          headers: { ...cacheHeaders, "Content-Type": "application/octet-stream" },
         });
       }
 

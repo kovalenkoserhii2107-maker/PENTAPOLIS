@@ -148,6 +148,8 @@ function normalizeAngle(rad: number): number {
  * - S1 (NW Basin):       `[186°, 268°)`
  * - S2 (NE Shelf):       `[268°, 342°)`
  */
+export const SECTOR_BOUNDARY_DEGREES = [36, 108, 186, 268, 342] as const;
+
 function angleToSector(deg: number): SectorId {
   if (deg >= 342 || deg < 36) return 5;
   if (deg < 108) return 4;
@@ -166,8 +168,111 @@ function baseCoastShapeFactor(rad: number): number {
     1.0 +
     0.11 * Math.cos(2 * rad - 0.3) +
     0.07 * Math.sin(3 * rad + 0.8) +
-    0.05 * Math.cos(5 * rad - 1.1)
+    0.05 * Math.cos(5 * rad - 1.1) +
+    // Capes and bays at several scales so the shore is not one smooth blob
+    0.024 * Math.sin(7 * rad + 1.3) +
+    0.015 * Math.sin(11 * rad + 0.4) +
+    0.009 * Math.sin(17 * rad + 2.1) +
+    0.005 * Math.sin(29 * rad + 0.9)
   );
+}
+
+/** Angular half-width (degrees) over which neighbouring sectors' coast radii blend into one smooth shore. */
+const COAST_BLEND_DEGREES = 14;
+
+/**
+ * Coast radius at an angle. Each sector has its own scale (to equalise land area), blended with
+ * the neighbour's near the shared border so the shoreline has no step at sector seams.
+ */
+function coastRadius(rad: number, deg: number, scales: Readonly<Record<SectorId, number>>): number {
+  let scale = scales[angleToSector(deg)];
+  for (const b of SECTOR_BOUNDARY_DEGREES) {
+    let d = deg - b;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    if (Math.abs(d) >= COAST_BLEND_DEGREES) continue;
+    const before = scales[angleToSector((b - 1 + 360) % 360)];
+    const after = scales[angleToSector(b + 1)];
+    const t = (d / COAST_BLEND_DEGREES + 1) / 2;
+    const w = t * t * (3 - 2 * t);
+    scale = before * (1 - w) + after * w;
+    break;
+  }
+  return scale * baseCoastShapeFactor(rad);
+}
+
+/**
+ * Half-width of a northern isthmus: a narrow neck that flares smoothly where it meets the
+ * mainland (`y = 34`) and where it joins the peninsula (`joinY`).
+ */
+function isthmusHalfWidth(y: number, joinY: number): number {
+  const top = Math.exp(-(((y - 34) / 24) ** 2));
+  const bottom = Math.exp(-(((joinY - y) / 30) ** 2));
+  return 18 + 16 * top + 22 * bottom + 1.5 * Math.sin(y * 0.05);
+}
+
+/** Gentle sideways drift of an isthmus centre line so its shores are not parallel straight lines. */
+function isthmusDrift(y: number, phase: number): number {
+  const t = Math.min(1, Math.max(0, (y - 34) / 206));
+  return Math.sin(t * Math.PI) * 4 * Math.sin(y * 0.018 + phase);
+}
+
+/** First row (from the north) where the peninsula body reaches column `x`. */
+function peninsulaTopY(x: number, scales: Readonly<Record<SectorId, number>>): number {
+  for (let y = 36; y < CORE_CENTER_Y; y++) {
+    const dx = x - CORE_CENTER_X;
+    const dy = y - CORE_CENTER_Y;
+    const rad = normalizeAngle(Math.atan2(dy, dx));
+    if (Math.hypot(dx, dy) <= coastRadius(rad, (rad * 180) / Math.PI, scales)) return y;
+  }
+  return 240;
+}
+
+/** Centripetal-free uniform Catmull-Rom through control points, sampled about every half tile. */
+function smoothPolyline(pts: readonly (readonly [number, number])[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)]!;
+    const p1 = pts[i]!;
+    const p2 = pts[i + 1]!;
+    const p3 = pts[Math.min(pts.length - 1, i + 2)]!;
+    const steps = Math.max(2, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) * 2));
+    for (let s = 0; s < steps; s++) {
+      const t = s / steps;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const f = (a: number, b: number, c: number, d: number) =>
+        0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
+  }
+  out.push([pts[pts.length - 1]![0], pts[pts.length - 1]![1]]);
+  return out;
+}
+
+/** Adds natural meanders: a sideways sine sway (two wavelengths), fading to zero at both ends. */
+function meander(path: readonly [number, number][], seed: number): [number, number][] {
+  const lengths = [0];
+  for (let i = 1; i < path.length; i++) {
+    lengths.push(lengths[i - 1]! + Math.hypot(path[i]![0] - path[i - 1]![0], path[i]![1] - path[i - 1]![1]));
+  }
+  const total = lengths[lengths.length - 1]!;
+  return path.map(([x, y], i) => {
+    const a = path[Math.max(0, i - 2)]!;
+    const b = path[Math.min(path.length - 1, i + 2)]!;
+    const tx = b[0] - a[0];
+    const ty = b[1] - a[1];
+    const len = Math.hypot(tx, ty) || 1;
+    const s = lengths[i]!;
+    const fade = Math.min(1, s / 25, (total - s) / 25);
+    const sway = (Math.sin(s / 7.5 + seed) * 4.2 + Math.sin(s / 2.9 + seed * 2.3) * 1.3) * fade;
+    return [x + (-ty / len) * sway, y + (tx / len) * sway];
+  });
+}
+
+/** Southern shore of the decorative northern mainland (the continent the isthmuses join). */
+export function mainlandEdgeY(x: number): number {
+  return 26 + 6 * Math.sin(x * 0.017 + 0.4) + 3 * Math.sin(x * 0.043 + 1.3);
 }
 
 let cachedPeninsulaMap: PeninsulaMapData | null = null;
@@ -190,17 +295,19 @@ export function generatePeninsulaMap(): PeninsulaMapData {
   };
 
   for (let iter = 0; iter < 5; iter++) {
+    const join1 = Math.min(240, peninsulaTopY(425, sectorScales));
+    const join2 = Math.min(240, peninsulaTopY(560, sectorScales));
     const counts: Record<SectorId, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     const step = iter < 3 ? 4 : 2;
     const weight = step * step;
     for (let y = 34; y < GRID_HEIGHT - 12; y += step) {
       const dy = y - CORE_CENTER_Y;
       for (let x = 12; x < GRID_WIDTH - 12; x += step) {
-        if (y <= 240 && x >= 401 && x <= 449) {
+        if (y <= join1 && Math.abs(x - 425 - isthmusDrift(y, 0.7)) <= isthmusHalfWidth(y, join1)) {
           counts[1] += weight;
           continue;
         }
-        if (y <= 240 && x >= 536 && x <= 584) {
+        if (y <= join2 && Math.abs(x - 560 - isthmusDrift(y, 2.9)) <= isthmusHalfWidth(y, join2)) {
           counts[2] += weight;
           continue;
         }
@@ -212,7 +319,7 @@ export function generatePeninsulaMap(): PeninsulaMapData {
         const rad = normalizeAngle(Math.atan2(dy, dx));
         const deg = (rad * 180) / Math.PI;
         const sec = angleToSector(deg);
-        const maxR = sectorScales[sec] * baseCoastShapeFactor(rad);
+        const maxR = coastRadius(rad, deg, sectorScales);
         if (dist <= maxR) {
           counts[sec] += weight;
         }
@@ -231,7 +338,7 @@ export function generatePeninsulaMap(): PeninsulaMapData {
     const rowOff = y * GRID_WIDTH;
     for (let x = 0; x < GRID_WIDTH; x++) {
       const idx = rowOff + x;
-      if (y < 34 && x >= 290 && x <= 690) {
+      if (y < mainlandEdgeY(x)) {
         surface[idx] = SurfaceType.Mainland;
         owner[idx] = OwnerCode.None;
         continue;
@@ -250,7 +357,7 @@ export function generatePeninsulaMap(): PeninsulaMapData {
       const rad = normalizeAngle(Math.atan2(dy, dx));
       const deg = (rad * 180) / Math.PI;
       const sec = angleToSector(deg);
-      const maxR = sectorScales[sec] * baseCoastShapeFactor(rad);
+      const maxR = coastRadius(rad, deg, sectorScales);
       if (dist <= maxR) {
         surface[idx] = SurfaceType.Land;
         owner[idx] = sec as OwnerCode;
@@ -259,12 +366,15 @@ export function generatePeninsulaMap(): PeninsulaMapData {
   }
 
   // Northern overland isthmus bridges connecting S1 (`x=420`) and S2 (`x=565`) to Mainland (`y=34..220`)
-  for (const [isthmusX, sec] of [
-    [425, OwnerCode.Sector1],
-    [560, OwnerCode.Sector2],
+  for (const [isthmusX, sec, phase] of [
+    [425, OwnerCode.Sector1, 0.7],
+    [560, OwnerCode.Sector2, 2.9],
   ] as const) {
-    for (let y = 34; y <= 240; y++) {
-      for (let x = isthmusX - 24; x <= isthmusX + 24; x++) {
+    const joinY = Math.min(240, peninsulaTopY(isthmusX, sectorScales));
+    for (let y = 34; y <= joinY + 30; y++) {
+      const hw = isthmusHalfWidth(y, joinY);
+      const cx = isthmusX + isthmusDrift(y, phase);
+      for (let x = Math.ceil(cx - hw); x <= Math.floor(cx + hw); x++) {
         const idx = y * GRID_WIDTH + x;
         if (owner[idx] === OwnerCode.None) {
           surface[idx] = SurfaceType.Land;
@@ -275,26 +385,20 @@ export function generatePeninsulaMap(): PeninsulaMapData {
   }
 
   // Carve the 5 canonical freshwater river systems (4 river loops in S1..S4 + 1 through-channel in S5)
-  const carveRiverPolyline = (pts: readonly [number, number][], halfWidth = 2) => {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const [x0, y0] = pts[i]!;
-      const [x1, y1] = pts[i + 1]!;
-      const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
-      for (let s = 0; s <= steps; s++) {
-        const cx = Math.round(x0 + ((x1 - x0) * s) / steps);
-        const cy = Math.round(y0 + ((y1 - y0) * s) / steps);
-        for (let oy = -halfWidth; oy <= halfWidth; oy++) {
-          for (let ox = -halfWidth; ox <= halfWidth; ox++) {
-            const tx = cx + ox;
-            const ty = cy + oy;
-            if (tx < 0 || tx >= GRID_WIDTH || ty < 0 || ty >= GRID_HEIGHT) continue;
-            const idx = ty * GRID_WIDTH + tx;
-            if (
-              surface[idx] === SurfaceType.Land &&
-              owner[idx] !== OwnerCode.CentralCore
-            ) {
-              surface[idx] = SurfaceType.River;
-            }
+  let riverSeed = 0;
+  const carveRiverPolyline = (pts: readonly [number, number][], sourceHalfWidth = 1.6, mouthHalfWidth = 2.9) => {
+    const path = meander(smoothPolyline(pts), (riverSeed += 1.7));
+    for (let i = 0; i < path.length; i++) {
+      const [cx, cy] = path[i]!;
+      const hw = sourceHalfWidth + (mouthHalfWidth - sourceHalfWidth) * (i / Math.max(1, path.length - 1));
+      const r = Math.ceil(hw);
+      for (let ty = Math.floor(cy - r); ty <= Math.ceil(cy + r); ty++) {
+        for (let tx = Math.floor(cx - r); tx <= Math.ceil(cx + r); tx++) {
+          if (tx < 0 || tx >= GRID_WIDTH || ty < 0 || ty >= GRID_HEIGHT) continue;
+          if (Math.hypot(tx + 0.5 - (cx + 0.5), ty + 0.5 - (cy + 0.5)) > hw) continue;
+          const idx = ty * GRID_WIDTH + tx;
+          if (surface[idx] === SurfaceType.Land && owner[idx] !== OwnerCode.CentralCore) {
+            surface[idx] = SurfaceType.River;
           }
         }
       }
