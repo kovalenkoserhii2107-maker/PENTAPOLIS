@@ -28,6 +28,7 @@ import { CouncilChatDrawer } from "./components/CouncilChatDrawer.tsx";
 import { AdminGodModeTray } from "./components/AdminGodModeTray.tsx";
 import { TransportPanel } from "./components/TransportPanel.tsx";
 import { AgentInspectorPanel } from "./components/AgentInspectorPanel.tsx";
+import { CityPanel } from "./components/CityPanel.tsx";
 
 interface MapMetaResponse {
   readonly width: number;
@@ -65,6 +66,8 @@ export const App: React.FC = () => {
   const [followingVehicle, setFollowingVehicle] = useState(false);
   const [showTransport, setShowTransport] = useState(false);
   const [undergroundView, setUndergroundView] = useState(false);
+  const [showCity, setShowCity] = useState(false);
+  const [landValueOverlay, setLandValueOverlay] = useState(false);
 
   const activeSectorRef = useRef<SectorId>(activeSectorId);
   activeSectorRef.current = activeSectorId;
@@ -252,6 +255,10 @@ export const App: React.FC = () => {
     sceneRef.current?.setUndergroundView(undergroundView);
   }, [undergroundView]);
 
+  useEffect(() => {
+    sceneRef.current?.setLandValueOverlay(landValueOverlay);
+  }, [landValueOverlay]);
+
   // Global hotkey `~` / `Backquote` for God-Mode Admin Tray & `Escape` to return to Inspect
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -347,12 +354,14 @@ export const App: React.FC = () => {
             }
             transportOpen={showTransport}
             onToggleTransport={() => setShowTransport((v) => !v)}
+            cityOpen={showCity}
+            onToggleCity={() => setShowCity((v) => !v)}
           />
         </div>
       )}
 
       {/* Right Column: Vehicle -> Citizen Inspector & Transport Office (Sprint 5) */}
-      {snapshot && (selectedVehicleId || showTransport) && (
+      {snapshot && (selectedVehicleId || showTransport || showCity) && (
         <div className="pointer-events-auto fixed right-3 top-14 z-30 w-80 max-h-[calc(100vh-8rem)] overflow-y-auto flex flex-col gap-2">
           {selectedVehicleId && (
             <AgentInspectorPanel
@@ -364,6 +373,24 @@ export const App: React.FC = () => {
                 setFollowingVehicle(false);
                 setUndergroundView(false);
                 sceneRef.current?.focusTile(x, y, 6);
+              }}
+            />
+          )}
+          {showCity && (
+            <CityPanel
+              snapshot={snapshot}
+              activeSectorId={activeSectorId}
+              landValueOverlay={landValueOverlay}
+              onToggleLandValueOverlay={() => setLandValueOverlay((v) => !v)}
+              onFocusTile={(x, y) => {
+                setFollowingVehicle(false);
+                setUndergroundView(false);
+                sceneRef.current?.focusTile(x, y, 6);
+              }}
+              onSendCommand={(cmd) => void sendCommand(cmd)}
+              onClose={() => {
+                setShowCity(false);
+                setLandValueOverlay(false);
               }}
             />
           )}
@@ -400,10 +427,12 @@ export const App: React.FC = () => {
       )}
 
       {/* Bottom-Right Tile & Controls Status Pill */}
-      <div className="pointer-events-none fixed right-3 bottom-3 z-20 flex flex-col items-end gap-1 text-[11px]">
+      <div className="pointer-events-none fixed right-3 bottom-16 z-20 flex flex-col items-end gap-1 text-[11px]">
         {snapshot && snapshot.emergencies.length > 0 && (
           <div className="px-2.5 py-1 rounded bg-rose-950/90 border border-rose-500/60 text-rose-200 max-w-xs truncate">
-            🚨 {snapshot.emergencies[snapshot.emergencies.length - 1]!.titleRu}
+            🚨 {snapshot.emergencies[snapshot.emergencies.length - 1]!.titleRu.split(":")[0]}
+            {snapshot.emergencies[snapshot.emergencies.length - 1]!.statusRu &&
+              ` — ${snapshot.emergencies[snapshot.emergencies.length - 1]!.statusRu}`}
           </div>
         )}
         <div className="px-2.5 py-1 rounded bg-slate-950/85 border border-slate-800 text-slate-300 font-mono">

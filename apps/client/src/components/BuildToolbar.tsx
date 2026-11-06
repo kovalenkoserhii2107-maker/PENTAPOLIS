@@ -3,6 +3,7 @@ import {
   ArrowUpCircle,
   Building2,
   Bus,
+  Landmark,
   CheckCircle2,
   Circle,
   Factory,
@@ -36,6 +37,8 @@ interface BuildToolbarProps {
   onBulldozeBuilding: (buildingId: string) => void;
   transportOpen: boolean;
   onToggleTransport: () => void;
+  cityOpen: boolean;
+  onToggleCity: () => void;
 }
 
 const NETWORK_ITEMS: readonly { kind: NetworkKind; label: string; costHint: string }[] = [
@@ -83,6 +86,8 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
   onBulldozeBuilding,
   transportOpen,
   onToggleTransport,
+  cityOpen,
+  onToggleCity,
 }) => {
   const [drawerMode, setDrawerMode] = useState<"none" | "network" | "zone" | "catalog">("none");
   const [catTab, setCatTab] = useState<CatalogTab>("EXT");
@@ -504,6 +509,19 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
           >
             <Bus className="w-3.5 h-3.5" />
             <span>Транспорт</span>
+          </button>
+
+          <button
+            onClick={onToggleCity}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition ${
+              cityOpen ? "bg-emerald-600 text-white" : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            <Landmark className="w-3.5 h-3.5" />
+            <span>Город</span>
+            {snapshot.emergencies.some((e) => e.sectorId === activeSectorId && e.attended === false) && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+            )}
           </button>
         </div>
       </div>

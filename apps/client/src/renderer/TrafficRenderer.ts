@@ -26,6 +26,8 @@ function bodyClassOf(v: VehicleAgentDto): BodyClass {
   if (v.role === "metro") return "metro";
   if (v.role === "bus") return "bus";
   if (v.role === "freight") return "truck";
+  // Fire engines, garbage trucks and utility crews are truck-sized; patrol cars and ambulances are cars
+  if (v.role === "service") return v.vehicleTypeId === "MUN-04" || v.vehicleTypeId === "MUN-06" || v.vehicleTypeId === "MUN-09" ? "truck" : "car";
   return "car";
 }
 

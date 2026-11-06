@@ -99,6 +99,7 @@ export class PeninsulaScene {
   private readonly busRoutesGroup = new THREE.Group();
   private undergroundView = false;
   private followVehicleId: string | null = null;
+  private landValueOverlay = false;
 
   private surfaceBytes: Uint8Array | null = null;
   private ownerBytes: Uint8Array | null = null;
@@ -201,7 +202,9 @@ export class PeninsulaScene {
         this.lastSnapshot.zones,
         this.catalogs,
         this.selectedBuildingId,
-        new Map(this.lastSnapshot.zoneSites.map((z) => [z.zoneId, z]))
+        new Map(this.lastSnapshot.zoneSites.map((z) => [z.zoneId, z])),
+        new Map(this.lastSnapshot.districts.map((d) => [d.zoneId, d])),
+        this.landValueOverlay
       );
     }
   }
@@ -218,6 +221,12 @@ export class PeninsulaScene {
     this.target.set(tileX, 0, tileY);
     this.zoomLevel = zoom;
     this.updateCameraTransform();
+  }
+
+  /** Land value overlay: zones tinted by district tier (sheet 25 Table 5). */
+  public setLandValueOverlay(on: boolean): void {
+    this.landValueOverlay = on;
+    this.setSelectedBuilding(this.selectedBuildingId);
   }
 
   public setTrafficState(traffic: TrafficStateDto): void {
@@ -483,7 +492,9 @@ export class PeninsulaScene {
       snapshot.zones,
       this.catalogs,
       this.selectedBuildingId,
-      new Map(snapshot.zoneSites.map((z) => [z.zoneId, z]))
+      new Map(snapshot.zoneSites.map((z) => [z.zoneId, z])),
+      new Map(snapshot.districts.map((d) => [d.zoneId, d])),
+      this.landValueOverlay
     );
     this.rebuildEmergencies(snapshot.emergencies);
   }
@@ -493,7 +504,8 @@ export class PeninsulaScene {
       this.emergenciesGroup.remove(this.emergenciesGroup.children[0]!);
     }
     for (const emg of emergencies) {
-      const col = emg.emergencyId === "FROZEN_CONSTRUCTION" ? 0xf59e0b : 0xef4444;
+      // Amber: frozen construction; orange: crews on the way; red: nobody is coming
+      const col = emg.emergencyId === "FROZEN_CONSTRUCTION" ? 0xf59e0b : emg.attended ? 0xf97316 : 0xef4444;
       const geo = new THREE.CylinderGeometry(0.6, 2.2, 18, 12, 1, true);
       const mat = new THREE.MeshBasicMaterial({
         color: col,

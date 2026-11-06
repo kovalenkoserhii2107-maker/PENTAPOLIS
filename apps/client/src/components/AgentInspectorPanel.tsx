@@ -19,6 +19,7 @@ const ROLE_LABELS: Readonly<Record<VehicleInspectorDto["role"], string>> = {
   freight: "Грузовой рейс",
   bus: "Городской автобус (лицензия)",
   metro: "Поезд метро",
+  service: "Городская служба — выезд на ЧП",
 };
 
 function money(symbol: string, minor: string): string {

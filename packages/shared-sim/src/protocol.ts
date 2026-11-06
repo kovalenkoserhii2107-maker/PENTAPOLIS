@@ -108,6 +108,21 @@ export interface ActiveEmergencyDto {
   readonly tileY: number;
   readonly titleRu: string;
   readonly expiresAtGameSeconds: number;
+  /** Why it happened (Sprint 6 organic emergencies). */
+  readonly causeRu?: string;
+  /** Building, road segment or zone hit by the emergency. */
+  readonly targetRef?: string | null;
+  /** A responder crew is assigned (otherwise it lasts 3x longer and leaves damage). */
+  readonly attended?: boolean;
+  readonly responders?: readonly EmergencyResponderDto[];
+  readonly statusRu?: string;
+}
+
+export interface EmergencyResponderDto {
+  readonly buildingId: string;
+  readonly vehicleTypeId: string;
+  readonly arrivesAtGameSeconds: number;
+  readonly path: readonly number[];
 }
 
 export interface ChatMessageDto {
@@ -150,7 +165,76 @@ export interface ZoneSiteStatusDto {
   readonly limitingMaterial: string | null;
 }
 
-export type VehicleRole = "commuter" | "freight" | "bus" | "metro";
+export type VehicleRole = "commuter" | "freight" | "bus" | "metro" | "service";
+
+export interface DistrictCoverageDto {
+  readonly police: number;
+  readonly fire: number;
+  readonly health: number;
+  readonly park: number;
+  readonly kindergarten: number;
+  readonly school: number;
+  readonly higherEducation: number;
+}
+
+/** One zone as a district cell (Sprint 6, GDD §6.3). */
+export interface DistrictDto {
+  readonly zoneId: string;
+  readonly sectorId: SectorId;
+  readonly zoneKind: ZoneKind;
+  readonly landValuePerTile: number;
+  readonly tier: 1 | 2 | 3 | 4 | 5;
+  readonly tierNameRu: string;
+  readonly visualClass: "P" | "M" | "R";
+  readonly crimeRate: number;
+  readonly ecology: number;
+  readonly happiness: number;
+  readonly coverage: DistrictCoverageDto;
+}
+
+export interface SectorCityStatsDto {
+  readonly sectorId: SectorId;
+  readonly districts: number;
+  readonly residents: number;
+  readonly avgLandValuePerTile: number;
+  readonly avgCrimeRate: number;
+  readonly avgEcology: number;
+  readonly districtHappiness: number;
+  readonly residentsByTier: readonly number[];
+  readonly coverage: DistrictCoverageDto;
+  readonly stations: ReadonlyArray<{ readonly buildingId: string; readonly kind: string; readonly capacity: number; readonly demand: number }>;
+}
+
+export interface SectorAutoStatsDto {
+  readonly sectorId: SectorId;
+  readonly fleetByStage: readonly number[];
+  readonly targetFleet: number;
+  readonly dealership: boolean;
+  readonly usedLot: boolean;
+  readonly repairShops: number;
+  readonly scrapyards: number;
+  readonly newCarsPerMonth: number;
+  readonly newCarsImported: boolean;
+  readonly newCarPriceUnits: number;
+  readonly breakdownsPerMonth: number;
+  readonly repairedPerMonth: number;
+  readonly strandedPerMonth: number;
+  readonly scrapTonsPerMonth: number;
+  readonly scrapRecycledTonsPerMonth: number;
+  readonly avgCarValueUnits: number;
+}
+
+export interface AdvisorTipDto {
+  readonly severity: "critical" | "warning" | "info";
+  readonly text: string;
+  readonly hint: string;
+}
+
+export interface AdvisorDto {
+  readonly advisorId: "urban" | "finance" | "logistics";
+  readonly nameRu: string;
+  readonly tips: readonly AdvisorTipDto[];
+}
 
 /** One visible vehicle sampled from the real flows; the client animates it along `path` at 60 FPS. */
 export interface VehicleAgentDto {
@@ -311,6 +395,11 @@ export interface WorldSnapshotDto {
   readonly transport: readonly SectorTransportStatsDto[];
   readonly construction: readonly SectorConstructionStatsDto[];
   readonly zoneSites: readonly ZoneSiteStatusDto[];
+  readonly districts: readonly DistrictDto[];
+  readonly city: readonly SectorCityStatsDto[];
+  readonly autos: readonly SectorAutoStatsDto[];
+  /** Advisors of every sector (the client shows the active one). */
+  readonly advisors: ReadonlyArray<{ readonly sectorId: SectorId; readonly advisors: readonly AdvisorDto[] }>;
 }
 
 export type ClientCommand =
