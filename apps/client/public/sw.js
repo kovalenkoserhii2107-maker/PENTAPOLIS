@@ -1,75 +1,89 @@
-const CACHE_NAME = "pentapolis-shell-v1";
-const PRECACHE_URLS = ["/", "/index.html", "/manifest.webmanifest"];
+/**
+ * PENTAPOLIS service worker (Sprint 8, GDD §8.2: PWA + Web Push).
+ *
+ * - App shell (page, scripts, icons) is cached so the game opens instantly and offline shows the
+ *   last build; the live world (`/api`, `/ws`) is never cached.
+ * - Web Push: notice-window warnings, emergencies and AI-Governor takeovers reach the phone even
+ *   when the game is closed (GDD §1.4).
+ */
+const CACHE = "pentapolis-shell-v1";
+const SHELL = ["./", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon.svg"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS).catch(() => undefined))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
+  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-      )
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  if (req.method !== "GET") return;
-
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return;
-  if (url.pathname === "/ws") return;
+  if (req.method !== "GET" || url.origin !== self.location.origin) return;
+  if (url.pathname.includes("/api/") || url.pathname.endsWith("/ws")) return;
 
-  // Live simulation API endpoints: network-first, never stale-cached
-  if (url.pathname.startsWith("/api/")) {
+  // Pages: network first so a new build is picked up, cached shell when offline
+  if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req).catch(
-        () =>
-          new Response(
-            JSON.stringify({ ok: false, error: "Нет соединения с сервером Пентаполиса" }),
-            { status: 503, headers: { "Content-Type": "application/json; charset=utf-8" } }
-          )
-      )
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put("./", copy));
+          return res;
+        })
+        .catch(() => caches.match("./"))
     );
     return;
   }
 
-  // Hashed Vite assets: cache-first
-  if (url.pathname.startsWith("/assets/")) {
-    event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          if (res.ok) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+  // Hashed build assets never change: cache first
+  event.respondWith(
+    caches.match(req).then(
+      (hit) =>
+        hit ||
+        fetch(req).then((res) => {
+          if (res.ok && url.pathname.includes("/assets/")) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
           }
           return res;
-        });
-      })
-    );
-    return;
-  }
+        })
+    )
+  );
+});
 
-  // SPA navigation & shell documents: network-first with cached app-shell fallback
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
-        if (res.ok) {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req).then((cached) => cached || caches.match("/index.html")))
+self.addEventListener("push", (event) => {
+  let data = { title: "PENTAPOLIS", body: "", tag: "pentapolis", url: "./" };
+  try {
+    data = { ...data, ...event.data.json() };
+  } catch {
+    if (event.data) data.body = event.data.text();
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      tag: data.tag,
+      icon: "./icons/icon-192.png",
+      badge: "./icons/icon-192.png",
+      data: { url: data.url },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || "./", self.location.href).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      const open = wins.find((w) => w.url.startsWith(self.registration.scope));
+      return open ? open.focus() : self.clients.openWindow(target);
+    })
   );
 });

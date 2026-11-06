@@ -36,6 +36,9 @@ import { StockExchangeModal } from "./components/StockExchangeModal.tsx";
 import { MegaprojectModal } from "./components/MegaprojectModal.tsx";
 import { AdvisorQuestOverlay, deriveQuestHighlight } from "./components/AdvisorQuestOverlay.tsx";
 import { SoundEngine } from "./audio/SoundEngine.ts";
+import { AudioEngine } from "./audio/AudioEngine.ts";
+import { apiUrl, wsUrl } from "./net/serverUrl.ts";
+import { currentPushState, disablePush, enablePush, type PushState } from "./net/push.ts";
 
 interface MapMetaResponse {
   readonly width: number;
@@ -86,6 +89,8 @@ export const App: React.FC = () => {
   if (!soundRef.current) {
     soundRef.current = new SoundEngine();
   }
+  const spatialRef = useRef(new AudioEngine());
+  const [pushState, setPushState] = useState<PushState>("unsupported");
   const [audioMuted, setAudioMuted] = useState<boolean>(() => soundRef.current!.isMuted());
   const [audioVolume, setAudioVolume] = useState<number>(() => soundRef.current!.getVolume());
 
@@ -138,7 +143,7 @@ export const App: React.FC = () => {
       }
       // Fallback HTTP POST if WebSocket is reconnecting
       try {
-        const res = await fetch("/api/command", {
+        const res = await fetch(apiUrl("/api/command"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cmd),
@@ -244,10 +249,10 @@ export const App: React.FC = () => {
     void (async () => {
       try {
         const [metaRes, binRes, snapRes, trafficRes] = await Promise.all([
-          fetch("/api/map-meta"),
-          fetch("/api/map.bin"),
-          fetch("/api/snapshot"),
-          fetch("/api/traffic"),
+          fetch(apiUrl("/api/map-meta")),
+          fetch(apiUrl("/api/map.bin")),
+          fetch(apiUrl("/api/snapshot")),
+          fetch(apiUrl("/api/traffic")),
         ]);
         if (cancelled) return;
         const meta = (await metaRes.json()) as MapMetaResponse;
@@ -275,51 +280,95 @@ export const App: React.FC = () => {
       }
     })();
 
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-    wsRef.current = ws;
-
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(String(ev.data)) as ServerMessage;
-        if (msg.type === "world_snapshot") {
-          const prevEmergencies = snapshotRef.current?.emergencies.length ?? 0;
-          if (msg.snapshot.emergencies.length > prevEmergencies) {
-            soundRef.current?.playEmergencySiren();
+    // Live feed with reconnect: phones drop sockets when they sleep or switch networks
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    const connect = () => {
+      const ws = new WebSocket(wsUrl());
+      wsRef.current = ws;
+      ws.onopen = () => {
+        attempts = 0;
+      };
+      ws.onclose = () => {
+        if (cancelled) return;
+        attempts += 1;
+        retryTimer = setTimeout(connect, Math.min(15_000, 1000 * 2 ** Math.min(attempts, 4)));
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data)) as ServerMessage;
+          if (msg.type === "world_snapshot") {
+            const prevEmergencies = snapshotRef.current?.emergencies.length ?? 0;
+            if (msg.snapshot.emergencies.length > prevEmergencies) {
+              soundRef.current?.playEmergencySiren();
+            }
+            setSnapshot(msg.snapshot);
+            sceneRef.current?.applySnapshot(msg.snapshot);
+          } else if (msg.type === "command_result") {
+            pushToast(msg.ok, msg.message);
+          } else if (msg.type === "notice_alert") {
+            pushToast(true, `⚠️ ${msg.message}`);
+          } else if (msg.type === "traffic_state") {
+            setTraffic(msg.traffic);
+            sceneRef.current?.setTrafficState(msg.traffic);
           }
-          setSnapshot(msg.snapshot);
-          sceneRef.current?.applySnapshot(msg.snapshot);
-        } else if (msg.type === "command_result") {
-          pushToast(msg.ok, msg.message);
-        } else if (msg.type === "notice_alert") {
-          pushToast(true, `⚠️ ${msg.message}`);
-        } else if (msg.type === "traffic_state") {
-          setTraffic(msg.traffic);
-          sceneRef.current?.setTrafficState(msg.traffic);
+        } catch {
+          // Ignore malformed frame
         }
-      } catch {
-        // Ignore malformed frame
-      }
+      };
     };
+    connect();
 
+    // Music and positional 3D emitters around the camera, through the UI sound engine's output
     const ambienceTimer = window.setInterval(() => {
-      if (sceneRef.current && soundRef.current) {
-        soundRef.current.updateSpatialAmbience(
-          sceneRef.current.getCameraState(),
-          snapshotRef.current,
-          trafficRef.current
-        );
+      const snd = soundRef.current;
+      const sc = sceneRef.current;
+      if (!snd || !sc) return;
+      if (snd.isMuted()) {
+        if (spatialRef.current.isRunning) spatialRef.current.stop();
+        return;
       }
+      if (!spatialRef.current.isRunning) {
+        const output = snd.getOutput();
+        if (!output || output.ctx.state !== "running") return; // waits for the first user gesture
+        spatialRef.current.start(output);
+      }
+      const cam = sc.getCameraState();
+      spatialRef.current.update({ x: cam.centerX, z: cam.centerY, zoom: cam.zoomLevel }, sc.getSoundSources());
     }, 250);
 
     return () => {
       cancelled = true;
       window.clearInterval(ambienceTimer);
-      ws.close();
+      if (retryTimer) clearTimeout(retryTimer);
+      wsRef.current?.close();
       scene.dispose();
       sceneRef.current = null;
     };
   }, [catalogs, pushToast, sendCommand]);
+
+  // Web Push state of this device; re-register it for the sector the mayor is playing
+  useEffect(() => {
+    void currentPushState().then(setPushState);
+  }, []);
+  useEffect(() => {
+    if (pushState === "on") void enablePush(activeSectorId);
+  }, [activeSectorId]);
+
+  const togglePush = useCallback(() => {
+    void (async () => {
+      const next = pushState === "on" ? await disablePush() : await enablePush(activeSectorRef.current);
+      setPushState(next);
+      pushToast(
+        next === "on",
+        next === "on"
+          ? "Уведомления включены: ЧП, окна уведомления соседей, поглощения, ИИ-Губернатор"
+          : next === "denied"
+            ? "Уведомления запрещены в настройках браузера"
+            : "Уведомления выключены"
+      );
+    })();
+  }, [pushState, pushToast]);
 
   // Keep Three.js tool & selection synchronized
   useEffect(() => {
@@ -480,6 +529,8 @@ export const App: React.FC = () => {
               setAudioVolume(vol);
               if (vol > 0 && audioMuted) setAudioMuted(false);
             }}
+            pushState={pushState}
+            onTogglePush={togglePush}
           />
 
           <AdvisorQuestOverlay

@@ -1,14 +1,6 @@
-import type { TrafficStateDto, WorldSnapshotDto } from "@pentapolis/shared-sim";
 
 const STORAGE_MUTED_KEY = "pentapolis_audio_muted";
 const STORAGE_VOLUME_KEY = "pentapolis_audio_volume";
-
-export interface SpatialCameraProbe {
-  readonly centerX: number;
-  readonly centerY: number;
-  readonly zoomLevel: number;
-  readonly waterRatio: number;
-}
 
 /**
  * Pure Procedural Web Audio Synthesizer & Spatial 3D Ambience Engine (Sprint 8).
@@ -16,20 +8,14 @@ export interface SpatialCameraProbe {
  * Uses zero external `.mp3` / `.wav` files:
  * - Procedural SFX: UI clicks, asphalt laying, heavy building foundation thud,
  *   cash-register chime (taxes/grants/dividends), and emergency dispatch siren.
- * - Spatial 3D Audio at `zoomLevel >= 4.5`: dynamically mixes avenue traffic + horns,
- *   construction crane & welding crackles, industrial turbine hum, and coastal waves + seagulls
- *   around the camera's current tile target.
+ * - Music and positional 3D emitters live in `AudioEngine`, mounted on this engine's output
+ *   (`getOutput()`), so one mute/volume control governs all sound.
  */
 export class SoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
 
-  private ambientInitialized = false;
-  private roadGain: GainNode | null = null;
-  private factoryGain: GainNode | null = null;
-  private waterGain: GainNode | null = null;
-  private lastMicroEventMs = 0;
 
   private muted: boolean;
   private volume: number;
@@ -246,224 +232,12 @@ export class SoundEngine {
     osc.stop(now + 0.52);
   }
 
-  private ensureAmbientBed(ctx: AudioContext): void {
-    if (this.ambientInitialized || !this.masterGain || !this.noiseBuffer) return;
-    this.ambientInitialized = true;
-
-    // 1. Road traffic continuous rumble (bandpass noise around 220 Hz)
-    const roadNoise = ctx.createBufferSource();
-    roadNoise.buffer = this.noiseBuffer;
-    roadNoise.loop = true;
-    const roadFilter = ctx.createBiquadFilter();
-    roadFilter.type = "bandpass";
-    roadFilter.frequency.value = 230;
-    roadFilter.Q.value = 0.9;
-    this.roadGain = ctx.createGain();
-    this.roadGain.gain.value = 0;
-    roadNoise.connect(roadFilter);
-    roadFilter.connect(this.roadGain);
-    this.roadGain.connect(this.masterGain);
-    roadNoise.start();
-
-    // 2. Industrial factory & turbine hum (58 Hz + 116 Hz warm drone)
-    const facOsc1 = ctx.createOscillator();
-    const facOsc2 = ctx.createOscillator();
-    facOsc1.type = "sine";
-    facOsc1.frequency.value = 58;
-    facOsc2.type = "triangle";
-    facOsc2.frequency.value = 116;
-    const facFilter = ctx.createBiquadFilter();
-    facFilter.type = "lowpass";
-    facFilter.frequency.value = 240;
-    this.factoryGain = ctx.createGain();
-    this.factoryGain.gain.value = 0;
-    facOsc1.connect(facFilter);
-    facOsc2.connect(facFilter);
-    facFilter.connect(this.factoryGain);
-    this.factoryGain.connect(this.masterGain);
-    facOsc1.start();
-    facOsc2.start();
-
-    // 3. River & coastal sea surf (lowpass noise modulated by 0.16 Hz wave LFO)
-    const waterNoise = ctx.createBufferSource();
-    waterNoise.buffer = this.noiseBuffer;
-    waterNoise.loop = true;
-    const waterFilter = ctx.createBiquadFilter();
-    waterFilter.type = "lowpass";
-    waterFilter.frequency.value = 620;
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    lfo.frequency.value = 0.16;
-    lfoGain.gain.value = 260;
-    lfo.connect(lfoGain);
-    lfoGain.connect(waterFilter.frequency);
-    this.waterGain = ctx.createGain();
-    this.waterGain.gain.value = 0;
-    waterNoise.connect(waterFilter);
-    waterFilter.connect(this.waterGain);
-    this.waterGain.connect(this.masterGain);
-    waterNoise.start();
-    lfo.start();
-  }
-
-  /** Soft dual-tone urban car horn micro-event. */
-  private triggerSoftCarHorn(ctx: AudioContext): void {
-    if (!this.masterGain) return;
-    const now = ctx.currentTime;
-    for (const f of [415, 523]) {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = f;
-      g.gain.setValueAtTime(0.035, now);
-      g.gain.exponentialRampToValueAtTime(0.0008, now + 0.14);
-      osc.connect(g);
-      g.connect(this.masterGain);
-      osc.start(now);
-      osc.stop(now + 0.15);
-    }
-  }
-
-  /** Construction crane clank & brief welding spark burst. */
-  private triggerConstructionClank(ctx: AudioContext): void {
-    if (!this.masterGain || !this.noiseBuffer) return;
-    const now = ctx.currentTime;
-
-    // Crane steel ping
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(1240, now);
-    osc.frequency.exponentialRampToValueAtTime(680, now + 0.08);
-    g.gain.setValueAtTime(0.05, now);
-    g.gain.exponentialRampToValueAtTime(0.0008, now + 0.09);
-    osc.connect(g);
-    g.connect(this.masterGain);
-    osc.start(now);
-    osc.stop(now + 0.1);
-
-    // Welding crackle
-    const weld = ctx.createBufferSource();
-    weld.buffer = this.noiseBuffer;
-    const hp = ctx.createBiquadFilter();
-    hp.type = "highpass";
-    hp.frequency.value = 2800;
-    const wg = ctx.createGain();
-    wg.gain.setValueAtTime(0.04, now + 0.05);
-    wg.gain.exponentialRampToValueAtTime(0.0008, now + 0.16);
-    weld.connect(hp);
-    hp.connect(wg);
-    wg.connect(this.masterGain);
-    weld.start(now + 0.05);
-    weld.stop(now + 0.17);
-  }
-
-  /** Distant coastal seagull pitch-glide. */
-  private triggerSeagull(ctx: AudioContext): void {
-    if (!this.masterGain) return;
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(1650, now);
-    osc.frequency.linearRampToValueAtTime(2150, now + 0.07);
-    osc.frequency.exponentialRampToValueAtTime(1180, now + 0.26);
-    g.gain.setValueAtTime(0.001, now);
-    g.gain.linearRampToValueAtTime(0.03, now + 0.05);
-    g.gain.exponentialRampToValueAtTime(0.0008, now + 0.28);
-    osc.connect(g);
-    g.connect(this.masterGain);
-    osc.start(now);
-    osc.stop(now + 0.29);
-  }
-
   /**
-   * Updates Spatial 3D Ambience every ~250ms based on camera zoom (`>= 4.5`) and tile center.
+   * Shared output for the spatial engine (music + HRTF emitters): same context and master gain,
+   * so mute and volume govern everything. `null` while muted or before the context exists.
    */
-  public updateSpatialAmbience(
-    probe: SpatialCameraProbe,
-    snapshot: WorldSnapshotDto | null,
-    traffic: TrafficStateDto | null
-  ): void {
-    if (!this.ctx || this.ctx.state !== "running") return;
-    this.ensureAmbientBed(this.ctx);
-    if (!this.roadGain || !this.factoryGain || !this.waterGain) return;
-
-    const now = this.ctx.currentTime;
-    if (this.muted || !snapshot || probe.zoomLevel < 4.5) {
-      this.roadGain.gain.setTargetAtTime(0, now, 0.18);
-      this.factoryGain.gain.setTargetAtTime(0, now, 0.18);
-      this.waterGain.gain.setTargetAtTime(0, now, 0.18);
-      return;
-    }
-
-    const zoomFactor = Math.min(1, (probe.zoomLevel - 4.3) / 3.2);
-    const radius = 28;
-    const { centerX, centerY } = probe;
-
-    // 1. Nearby vehicles / avenues
-    let nearbyVehicles = 0;
-    if (traffic) {
-      for (const v of traffic.vehicles) {
-        const vx = v.path[0] ?? -999;
-        const vy = v.path[1] ?? -999;
-        if (Math.abs(vx - centerX) <= radius && Math.abs(vy - centerY) <= radius) {
-          nearbyVehicles += 1;
-        }
-      }
-    }
-    const roadWeight = Math.min(1, nearbyVehicles / 8) * zoomFactor;
-
-    // 2. Nearby active construction sites & operational factories
-    let constructionSites = 0;
-    let factoryCount = 0;
-    for (const b of snapshot.buildings) {
-      const bx = b.tileX + b.width * 0.5;
-      const by = b.tileY + b.depth * 0.5;
-      if (Math.abs(bx - centerX) > radius || Math.abs(by - centerY) > radius) continue;
-      if (b.constructionProgress < 1 && !b.stalledAwaitingPrivate) {
-        constructionSites += 1;
-      } else if (
-        b.constructionProgress >= 1 &&
-        (b.catalogId.startsWith("EXT-") ||
-          b.catalogId.startsWith("PRO-") ||
-          b.catalogId.startsWith("CMP-") ||
-          b.catalogId.startsWith("ASM-") ||
-          b.catalogId.startsWith("ENG-"))
-      ) {
-        factoryCount += 1;
-      }
-    }
-    for (const z of snapshot.zones) {
-      const zx = z.x + z.width * 0.5;
-      const zy = z.y + z.depth * 0.5;
-      if (Math.abs(zx - centerX) > radius || Math.abs(zy - centerY) > radius) continue;
-      if (z.occupancyRatio > 0.02 && z.occupancyRatio < 0.96) {
-        constructionSites += 1;
-      }
-    }
-
-    const factoryWeight = Math.min(1, factoryCount / 2) * zoomFactor;
-    const constructionWeight = Math.min(1, constructionSites / 2) * zoomFactor;
-    const waterWeight = probe.waterRatio * zoomFactor;
-
-    this.roadGain.gain.setTargetAtTime(roadWeight * 0.11, now, 0.2);
-    this.factoryGain.gain.setTargetAtTime(factoryWeight * 0.09, now, 0.2);
-    this.waterGain.gain.setTargetAtTime(waterWeight * 0.1, now, 0.2);
-
-    // Occasional spatial micro-SFX (horn, crane/welding, seagull) at most once every 2.4s
-    const nowMs = performance.now();
-    if (nowMs - this.lastMicroEventMs > 2400) {
-      if (constructionWeight > 0.3 && Math.random() < 0.32) {
-        this.lastMicroEventMs = nowMs;
-        this.triggerConstructionClank(this.ctx);
-      } else if (roadWeight > 0.35 && Math.random() < 0.25) {
-        this.lastMicroEventMs = nowMs;
-        this.triggerSoftCarHorn(this.ctx);
-      } else if (waterWeight > 0.3 && Math.random() < 0.28) {
-        this.lastMicroEventMs = nowMs;
-        this.triggerSeagull(this.ctx);
-      }
-    }
+  public getOutput(): { ctx: AudioContext; destination: AudioNode } | null {
+    const ctx = this.ensureContext();
+    return ctx && this.masterGain ? { ctx, destination: this.masterGain } : null;
   }
 }

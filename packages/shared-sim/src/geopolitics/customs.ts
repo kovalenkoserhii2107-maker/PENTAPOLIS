@@ -225,7 +225,9 @@ export const NOTICE_DAYS_EMBARGO = 6;
 export function noticeDaysFor(current: BorderSidePolicyDto, next: BorderSidePolicyDto): number {
   const closes = next.visaRegime === "closed" && current.visaRegime !== "closed";
   const newEmbargo = next.embargo.some((l) => !current.embargo.includes(l));
-  if (closes || newEmbargo) return NOTICE_DAYS_EMBARGO;
+  // Cutting a neighbour's gas is one of GDD §1.4's named hostile moves
+  const gasCut = next.gasValveOpen === false && current.gasValveOpen !== false;
+  if (closes || newEmbargo || gasCut) return NOTICE_DAYS_EMBARGO;
   const hostileDuty = CARGO_LANES.some(
     (l) => next.importDuty[l] > HOSTILE_DUTY_THRESHOLD && next.importDuty[l] > current.importDuty[l]
   );

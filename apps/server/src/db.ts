@@ -139,6 +139,13 @@ export class WorldDatabase {
         PRIMARY KEY (building_id, holder_sector)
       );
 
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        endpoint TEXT PRIMARY KEY,
+        sector_id INTEGER NOT NULL,
+        subscription_json TEXT NOT NULL,
+        created_at_iso TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS chat_messages (
         id TEXT PRIMARY KEY,
         timestamp_iso TEXT NOT NULL,
@@ -380,6 +387,26 @@ export class WorldDatabase {
   public deleteStakesOfBuilding(buildingId: string): void {
     this.db.query("DELETE FROM equity_stakes WHERE building_id = ?1").run(buildingId);
     this.db.query("DELETE FROM megaproject_stakes WHERE building_id = ?1").run(buildingId);
+  }
+
+  public savePushSubscription(endpoint: string, sectorId: SectorId, subscriptionJson: string): void {
+    this.db
+      .query(`
+        INSERT INTO push_subscriptions (endpoint, sector_id, subscription_json, created_at_iso) VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT(endpoint) DO UPDATE SET sector_id = excluded.sector_id, subscription_json = excluded.subscription_json
+      `)
+      .run(endpoint, sectorId, subscriptionJson, new Date().toISOString());
+  }
+
+  public deletePushSubscription(endpoint: string): void {
+    this.db.query("DELETE FROM push_subscriptions WHERE endpoint = ?1").run(endpoint);
+  }
+
+  public loadPushSubscriptions(sectorId: SectorId): Array<{ endpoint: string; subscriptionJson: string }> {
+    return this.db
+      .query<{ endpoint: string; subscription_json: string }, [number]>("SELECT endpoint, subscription_json FROM push_subscriptions WHERE sector_id = ?1")
+      .all(sectorId)
+      .map((r) => ({ endpoint: r.endpoint, subscriptionJson: r.subscription_json }));
   }
 
   public loadBusRoutes(): BusRouteDto[] {

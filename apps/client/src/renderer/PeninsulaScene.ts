@@ -34,6 +34,7 @@ import {
 import { RoadMeshBuilder } from "./RoadMeshBuilder.ts";
 import { LotGenerator, type HeatmapOverlayKind } from "./LotGenerator.ts";
 import { TrafficRenderer } from "./TrafficRenderer.ts";
+import type { SoundSource } from "../audio/AudioEngine.ts";
 
 const MAX_FOLIAGE_TREES = 20_000;
 const FOLIAGE_GREEN_HEX = [0x15803d, 0x16a34a, 0x22c55e, 0x4d7c0f] as const;
@@ -131,6 +132,8 @@ export class PeninsulaScene {
   private readonly trafficRenderer = new TrafficRenderer();
   private readonly busRoutesGroup = new THREE.Group();
   private undergroundView = false;
+  private soundSources: SoundSource[] = [];
+  private lastTraffic: TrafficStateDto | null = null;
   private followVehicleId: string | null = null;
   private heatmapOverlay: HeatmapOverlayKind = "none";
 
@@ -334,7 +337,55 @@ export class PeninsulaScene {
     }
   }
 
+  /**
+   * Where the city makes noise, for the spatial audio engine: busy roads (real traffic), plants,
+   * building sites, emergencies, ports and — from the camera's water probe — the coastline surf.
+   */
+  public getSoundSources(): SoundSource[] {
+    const out = [...this.soundSources];
+    const cam = this.getCameraState();
+    if (cam.waterRatio > 0.2) {
+      out.push({ id: "coast", kind: "gulls", x: this.target.x, z: this.target.z, intensity: Math.min(1, cam.waterRatio * 1.4) });
+    }
+    return out;
+  }
+
+  private rebuildSoundSources(): void {
+    const snap = this.lastSnapshot;
+    if (!snap) return;
+    const out: SoundSource[] = [];
+    const segById = new Map(snap.segments.map((sg) => [sg.id, sg]));
+    for (const t of this.lastTraffic?.segments ?? []) {
+      const seg = segById.get(t.segmentId);
+      if (!seg || t.vehiclesPerHour < 1) continue;
+      out.push({
+        id: `road:${seg.id}`,
+        kind: "traffic",
+        x: (seg.fromX + seg.toX) / 2,
+        z: (seg.fromY + seg.toY) / 2,
+        intensity: Math.min(1, Math.log10(1 + t.vehiclesPerHour) / 3),
+      });
+    }
+    for (const b of snap.buildings) {
+      const x = b.tileX + b.width / 2;
+      const z = b.tileY + b.depth / 2;
+      const building = b.constructionProgress < 1 || !!b.upgradeTargetLevel;
+      if (building && !b.stalledAwaitingPrivate) out.push({ id: `crane:${b.id}`, kind: "crane", x, z, intensity: 0.8 });
+      else if (/^(PRO|CMP|ASM|EXT)-|^ENG-0[12]/.test(b.catalogId)) out.push({ id: `plant:${b.id}`, kind: "furnace", x, z, intensity: 0.4 + 0.12 * b.level });
+      if (/^LOG-0[34]|^LOG-10/.test(b.catalogId)) out.push({ id: `port:${b.id}`, kind: "gulls", x, z, intensity: 0.9 });
+    }
+    for (const zn of snap.zones) {
+      if (zn.occupancyRatio < 1) out.push({ id: `site:${zn.id}`, kind: "crane", x: zn.x + 1, z: zn.y + 1, intensity: 0.6 });
+    }
+    for (const e of snap.emergencies) {
+      if (e.emergencyId !== "FROZEN_CONSTRUCTION") out.push({ id: `emg:${e.instanceId}`, kind: "siren", x: e.tileX, z: e.tileY, intensity: 1 });
+    }
+    this.soundSources = out;
+  }
+
   public setTrafficState(traffic: TrafficStateDto): void {
+    this.lastTraffic = traffic;
+    this.rebuildSoundSources();
     this.trafficRenderer.setTraffic(traffic);
     this.rebuildBusRoutes(traffic.busRoutes);
   }
@@ -607,6 +658,7 @@ export class PeninsulaScene {
     );
     this.rebuildEmergencies(snapshot.emergencies);
     this.rebuildOverlayRings();
+    this.rebuildSoundSources();
 
     const sig = `${snapshot.segments.length}|${snapshot.zones.length}|${snapshot.buildings.length}|${
       snapshot.segments[snapshot.segments.length - 1]?.id ?? ""
@@ -1071,8 +1123,31 @@ export class PeninsulaScene {
     return null;
   }
 
+  /** Moves the camera by a screen-space drag (isometric ground-plane mapping). */
+  private panByScreenDelta(dx: number, dy: number): void {
+    const panScale = (this.frustumHalfHeight * 2) / (Math.max(1, this.container.clientHeight) * this.zoomLevel);
+    // Convert screen delta into isometric ground plane (+X/-Z for horizontal, +X/+Z for vertical)
+    const isoX = (-dx * 0.7071 - dy * 0.866) * panScale;
+    const isoZ = (dx * 0.7071 - dy * 0.866) * panScale;
+    this.target.x = Math.max(40, Math.min(960, this.target.x + isoX));
+    this.target.z = Math.max(40, Math.min(960, this.target.z + isoZ));
+    this.followVehicleId = null;
+    this.updateCameraTransform();
+  }
+
   private bindEvents(): void {
     const dom = this.renderer.domElement;
+    // Touch (landscape phones): one finger pans in Inspect and taps select; two fingers pinch-zoom
+    // and pan in every mode; build tools keep single-finger drags.
+    dom.style.touchAction = "none";
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch: { dist: number; midX: number; midY: number } | null = null;
+    let tap: { x: number; y: number } | null = null;
+    let replayingTap = false;
+    const pinchState = () => {
+      const [a, b] = [...touches.values()];
+      return { dist: Math.hypot(a!.x - b!.x, a!.y - b!.y), midX: (a!.x + b!.x) / 2, midY: (a!.y + b!.y) / 2 };
+    };
 
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
     const onWheel = (e: WheelEvent) => {
@@ -1083,6 +1158,25 @@ export class PeninsulaScene {
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === "touch" && !replayingTap) {
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size >= 2) {
+          pinch = pinchState();
+          tap = null;
+          this.isPanning = false;
+          this.dragStartTile = null;
+          this.rebuildPreview();
+          return;
+        }
+        if (this.tool.mode === "inspect") {
+          tap = { x: e.clientX, y: e.clientY };
+          this.lastPointerX = e.clientX;
+          this.lastPointerY = e.clientY;
+          return;
+        }
+        // Touch has no hover: show the tool preview where the finger lands
+        this.currentHoverTile = this.screenToTile(e.clientX, e.clientY);
+      }
       if (e.button === 2 || e.button === 1 || this.keysPressed.has("Space")) {
         this.isPanning = true;
         this.followVehicleId = null;
@@ -1097,7 +1191,8 @@ export class PeninsulaScene {
 
       if (this.tool.mode === "inspect") {
         const rect = this.renderer.domElement.getBoundingClientRect();
-        const vehicleId = this.trafficRenderer.pickNearest(e.clientX, e.clientY, this.camera, rect);
+        // A finger is wider than a cursor: pick vehicles within 24 px on touch
+        const vehicleId = this.trafficRenderer.pickNearest(e.clientX, e.clientY, this.camera, rect, e.pointerType === "touch" ? 24 : 14);
         if (vehicleId) {
           this.callbacks.onSelectVehicle?.(vehicleId);
           return;
@@ -1169,19 +1264,26 @@ export class PeninsulaScene {
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerType === "touch" && touches.has(e.pointerId)) {
+        touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (touches.size >= 2 && pinch) {
+          const next = pinchState();
+          this.zoomLevel = Math.max(0.55, Math.min(14, this.zoomLevel * (next.dist / Math.max(1, pinch.dist))));
+          this.panByScreenDelta(next.midX - pinch.midX, next.midY - pinch.midY);
+          pinch = next;
+          return;
+        }
+        if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8) {
+          tap = null;
+          this.isPanning = true;
+        }
+      }
       if (this.isPanning) {
         const dx = e.clientX - this.lastPointerX;
         const dy = e.clientY - this.lastPointerY;
         this.lastPointerX = e.clientX;
         this.lastPointerY = e.clientY;
-
-        const panScale = (this.frustumHalfHeight * 2) / (Math.max(1, this.container.clientHeight) * this.zoomLevel);
-        // Convert screen delta into isometric ground plane (+X/-Z for horizontal, +X/+Z for vertical)
-        const isoX = (-dx * 0.7071 - dy * 0.866) * panScale;
-        const isoZ = (dx * 0.7071 - dy * 0.866) * panScale;
-        this.target.x = Math.max(40, Math.min(960, this.target.x + isoX));
-        this.target.z = Math.max(40, Math.min(960, this.target.z + isoZ));
-        this.updateCameraTransform();
+        this.panByScreenDelta(dx, dy);
         return;
       }
 
@@ -1192,6 +1294,20 @@ export class PeninsulaScene {
     };
 
     const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerType === "touch") {
+        touches.delete(e.pointerId);
+        if (touches.size < 2) pinch = null;
+        if (tap && touches.size === 0) {
+          // A tap in Inspect: replay it as a click on the same point (keeping the touch pick radius)
+          const at = tap;
+          tap = null;
+          replayingTap = true;
+          onPointerDown(new PointerEvent("pointerdown", { clientX: at.x, clientY: at.y, button: 0, pointerType: "touch" }));
+          replayingTap = false;
+          return;
+        }
+        if (touches.size > 0) return;
+      }
       if (this.isPanning) {
         this.isPanning = false;
         return;
@@ -1241,6 +1357,15 @@ export class PeninsulaScene {
     dom.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    const onPointerCancel = (e: PointerEvent) => {
+      touches.delete(e.pointerId);
+      if (touches.size < 2) pinch = null;
+      if (touches.size === 0) {
+        tap = null;
+        this.isPanning = false;
+      }
+    };
+    window.addEventListener("pointercancel", onPointerCancel);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     window.addEventListener("resize", onResize);
@@ -1251,6 +1376,7 @@ export class PeninsulaScene {
       dom.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("resize", onResize);

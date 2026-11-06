@@ -131,6 +131,13 @@ import {
   sideOf,
 } from "./geopolitics.ts";
 
+/** Something a mayor should hear about on their phone (Sprint 8 Web Push). */
+export interface MayorAlert {
+  readonly title: string;
+  readonly body: string;
+  readonly tag: string;
+}
+
 export interface CommandOutcome {
   readonly ok: boolean;
   readonly message: string;
@@ -230,6 +237,8 @@ export class WorldSimulation {
   private readonly megaResources = new Map<string, Partial<Record<MegaprojectResourceId, number>>>();
   private readonly foreignStakes: ForeignStakeRecord[] = [];
   private readonly pendingTakeovers: PendingTakeoverDto[] = [];
+  /** Set by the HTTP layer to deliver phone alerts; the simulation never waits for delivery. */
+  public onMayorAlert: ((sectorId: SectorId, alert: MayorAlert) => void) | null = null;
   private readonly fleets = new Map<SectorId, SectorFleetState>(
     SECTOR_IDS.map((sectorId) => [sectorId, { sectorId, fleet: [0, 0, 0, 0, 0] }])
   );
@@ -522,12 +531,14 @@ export class WorldSimulation {
     while (this.lastMonthProcessed < totalMonthsNow) {
       this.lastMonthProcessed += 1;
       // Book monthly geopolitics & municipal transit cashflows into the 7-column ledger before stepMonth()
-      const geoNetBySector = new Map<SectorId, Money>();
+      // and settle the treasury with exactly the booked amounts (the engine records them as cash, not debt)
       for (const sid of SECTOR_IDS) {
-        geoNetBySector.set(sid, this.bookAndComputeMonthlyGeopolitics(sid));
+        const sidReg = this.engine.getRegion(sid);
+        sidReg.treasuryCashAtCb += this.bookAndComputeMonthlyGeopolitics(sid);
         if (this.occupiedBySector.get(sid)) {
           const roadBill = this.sectorRoadServiceCost(sid);
           if (roadBill > 0n) {
+            sidReg.treasuryCashAtCb -= roadBill;
             this.engine.bookLedgerEntry(sid, [
               "Municipal road service (T -> Fc)",
               0n,
@@ -544,6 +555,7 @@ export class WorldSimulation {
             if (route.sectorId === sid) busFees += BigInt(route.licenseFeeMonthlyMinor);
           }
           if (busFees > 0n) {
+            sidReg.treasuryCashAtCb += busFees;
             this.engine.bookLedgerEntry(sid, [
               "City bus licence fees (Fc -> T)",
               0n,
@@ -563,15 +575,6 @@ export class WorldSimulation {
         // Credit monthly positive municipal operating surplus (scaled smoothly for active build phase)
         if (rep.budgetBalance > 0n) {
           reg.treasuryCashAtCb += mulRate(rep.budgetBalance, 0.04);
-        }
-        // Sprint 7 cross-border settlement (customs, visas, power ring, gas, backup mazut, dividends)
-        reg.treasuryCashAtCb += geoNetBySector.get(rep.sectorId) ?? 0n;
-        // Road Service bill and bus licence fees (Sprint 5) for mayor-run sectors
-        if (this.occupiedBySector.get(rep.sectorId)) {
-          reg.treasuryCashAtCb -= this.sectorRoadServiceCost(rep.sectorId);
-          for (const route of this.busRoutes.values()) {
-            if (route.sectorId === rep.sectorId) reg.treasuryCashAtCb += BigInt(route.licenseFeeMonthlyMinor);
-          }
         }
         this.persistSectorState(rep.sectorId);
 
@@ -949,6 +952,21 @@ export class WorldSimulation {
     this.db.setMeta("megaResources", JSON.stringify([...this.megaResources]));
   }
 
+  /** Returns (part of) a bidder's escrowed takeover payment, through the same channel it was paid. */
+  private refundTakeoverEscrow(tk: PendingTakeoverDto, fraction = 1): void {
+    const refundWcu = fraction >= 1 ? BigInt(tk.bidPriceWcuMinor) : mulRate(BigInt(tk.bidPriceWcuMinor), fraction);
+    if (refundWcu <= 0n) return;
+    const bidderReg = this.engine.getRegion(tk.bidderSectorId);
+    if (tk.source === "swf") {
+      bidderReg.swfBalanceWcu += refundWcu;
+    } else {
+      const bidderLocal = mulRate(refundWcu, bidderReg.fxRatePerWcu);
+      bidderReg.treasuryCashAtCb += bidderLocal;
+      this.engine.bookLedgerEntry(tk.bidderSectorId, ["Refunded takeover escrow (World -> T)", 0n, 0n, 0n, bidderLocal, 0n, 0n, -bidderLocal]);
+    }
+    this.persistSectorState(tk.bidderSectorId);
+  }
+
   private applyDueTakeovers(): string[] {
     const alerts: string[] = [];
     for (let i = this.pendingTakeovers.length - 1; i >= 0; i--) {
@@ -956,16 +974,29 @@ export class WorldSimulation {
       if (tk.effectiveAtGameSeconds > this.totalGameSeconds) continue;
       this.pendingTakeovers.splice(i, 1);
       const b = this.buildings.get(tk.buildingId);
-      if (!b) continue;
+      if (!b) {
+        // The plant is gone: the bid cannot be filled, the escrow goes back to the bidder
+        this.refundTakeoverEscrow(tk);
+        alerts.push(`↩️ Поглощение «${tk.companyNameRu}» отменено: предприятия больше нет, средства возвращены Сектору ${tk.bidderSectorId}`);
+        continue;
+      }
       let stake = this.foreignStakes.find((f) => f.buildingId === b.id && f.holderSector === tk.bidderSectorId);
       if (!stake) {
         stake = { buildingId: b.id, holderSector: tk.bidderSectorId, share: 0 };
         this.foreignStakes.push(stake);
       }
-      stake.share = Number(Math.min(1 - b.cityEquityShare, stake.share + tk.deltaShare).toFixed(4));
+      // Only the free float left after the city and every other holder can change hands
+      const othersForeign = this.foreignStakes
+        .filter((f) => f.buildingId === b.id && f !== stake)
+        .reduce((t, f) => t + f.share, 0);
+      const available = Math.max(0, 1 - b.cityEquityShare - othersForeign - stake.share);
+      const filled = Math.min(tk.deltaShare, available);
+      stake.share = Number((stake.share + filled).toFixed(4));
       this.db.upsertEquityStake(b.id, tk.bidderSectorId, stake.share);
+      const filledFraction = tk.deltaShare > 0 ? filled / tk.deltaShare : 0;
+      if (filledFraction < 1) this.refundTakeoverEscrow(tk, 1 - filledFraction);
       const homeReg = this.engine.getRegion(tk.targetSectorId);
-      const homeLocal = mulRate(BigInt(tk.bidPriceWcuMinor), homeReg.fxRatePerWcu);
+      const homeLocal = mulRate(mulRate(BigInt(tk.bidPriceWcuMinor), filledFraction), homeReg.fxRatePerWcu);
       this.engine.bookLedgerEntry(tk.targetSectorId, [
         "Foreign takeover settlement (World -> Fk)",
         0n,
@@ -1069,6 +1100,7 @@ export class WorldSimulation {
     this.db.upsertBorderPost(updated);
     this.recomputeTraffic();
     this.pushSystemChat(`⚠️ ОКНО УВЕДОМЛЕНИЯ для Сектора ${neighbor}: ${descriptionRu}`);
+    this.onMayorAlert?.(neighbor, { title: `⚠️ КПП #${post.id}: окно уведомления`, body: descriptionRu, tag: `notice-${post.id}` });
     return { ok: true, message: descriptionRu, noticeAlerts: [descriptionRu] };
   }
 
@@ -1079,9 +1111,28 @@ export class WorldSimulation {
     this.engine.getRegion(cmd.sectorId).lastMayorActivityEpochMs = Date.now();
     const neighbor = post.sectorA === cmd.sectorId ? post.sectorB : post.sectorA;
     const nextSide: BorderSidePolicyDto = { ...current, gasValveOpen: cmd.open };
+    // Closing the valve is a hostile move: it waits for the notice window like an embargo (GDD §1.4)
+    const days = noticeDaysFor(current, nextSide);
+    if (days > 0) {
+      const descriptionRu = `Сектор ${cmd.sectorId} перекрывает газовый вентиль КПП #${post.id} для Сектора ${neighbor} — через ${days} игр. дн.`;
+      const pending: BorderPostDto = {
+        ...post,
+        pending: [
+          ...post.pending.filter((c) => c.sectorId !== cmd.sectorId),
+          { sectorId: cmd.sectorId, effectiveAtGameSeconds: this.totalGameSeconds + days * 86_400, descriptionRu, policy: nextSide },
+        ],
+      };
+      this.borderPosts.set(post.id, pending);
+      this.db.upsertBorderPost(pending);
+      this.pushSystemChat(`⚠️ ОКНО УВЕДОМЛЕНИЯ для Сектора ${neighbor}: ${descriptionRu}`);
+      this.onMayorAlert?.(neighbor, { title: `⚠️ КПП #${post.id}: перекрытие газа`, body: descriptionRu, tag: `gas-${post.id}` });
+      return { ok: true, message: descriptionRu, noticeAlerts: [descriptionRu] };
+    }
     const updated: BorderPostDto = {
       ...post,
       sides: post.sides.map((sd) => (sd.sectorId === cmd.sectorId ? nextSide : sd)),
+      // Reopening also cancels a cut that was still waiting in the notice window
+      pending: post.pending.filter((c) => !(c.sectorId === cmd.sectorId && c.policy.gasValveOpen === false)),
     };
     this.borderPosts.set(post.id, updated);
     this.db.upsertBorderPost(updated);
@@ -1100,9 +1151,21 @@ export class WorldSimulation {
       .map((b) => megaprojectStatus(b, this.catalogs, stakes, this.megaResources.get(b.id)));
   }
 
+  /** Catalog unlock rule for MEG-*: 3 of 5 regions at the Metropolis stage (S5). */
+  private megaprojectsLockedReason(): string | null {
+    const metropolises = SECTOR_IDS.filter(
+      (s) => this.computeSectorStage(Math.round(this.engine.getRegion(s).classes.reduce((t, c) => t + c.households, 0))) === "S5"
+    ).length;
+    return metropolises < 3
+      ? `Мегапроекты открываются, когда 3 из 5 регионов достигнут этапа S5 (сейчас ${metropolises})`
+      : null;
+  }
+
   private handleFoundMegaproject(cmd: Extract<ClientCommand, { type: "found_megaproject" }>): CommandOutcome {
     const spec = MEGAPROJECT_SPECS[cmd.catalogId];
     if (!spec) return { ok: false, message: `Неизвестный мегапроект ${cmd.catalogId}` };
+    const locked = this.megaprojectsLockedReason();
+    if (locked) return { ok: false, message: locked };
     if ([...this.buildings.values()].some((b) => b.catalogId === cmd.catalogId)) {
       return { ok: false, message: `«${spec.nameRu}» уже заложен в Центральном Ядре — внесите вклад в стройку` };
     }
@@ -1187,7 +1250,10 @@ export class WorldSimulation {
     if (cmd.caravanCommodity && (cmd.caravanTons ?? 0) > 0) {
       const req = status.requiredResources?.[cmd.caravanCommodity] ?? 0;
       const deliv = status.deliveredResources?.[cmd.caravanCommodity] ?? 0;
-      shippedTons = Math.min(Math.round(cmd.caravanTons!), Math.max(100, req - deliv));
+      shippedTons = Math.min(Math.round(cmd.caravanTons!), Math.max(0, req - deliv));
+      if (shippedTons <= 0) {
+        return { ok: false, message: `«${MEGAPROJECT_RESOURCE_NAMES_RU[cmd.caravanCommodity]}» для этого мегапроекта уже доставлено полностью` };
+      }
       const unitWcu =
         this.catalogs.commoditiesByName.get(cmd.caravanCommodity)?.worldReferencePriceUnits ??
         (cmd.caravanCommodity === "Microchips"
@@ -1203,7 +1269,11 @@ export class WorldSimulation {
     }
 
     if (amount <= 0n) return { ok: false, message: "Укажите сумму взноса в МРЕ или объём каравана" };
-    if (amount > remaining) amount = remaining;
+    if (amount > remaining) {
+      // Only the tonnage still paid for reaches the Core
+      if (shippedTons > 0) shippedTons = Math.max(1, Math.floor((shippedTons * Number(remaining)) / Number(amount)));
+      amount = remaining;
+    }
 
     const local = mulRate(amount, reg.fxRatePerWcu);
     if (cmd.source === "swf") {
@@ -1364,9 +1434,12 @@ export class WorldSimulation {
       else buyer.treasuryCashAtCb += buyerLocal;
     };
 
+    const escrowed = this.pendingTakeovers.filter((t) => t.buildingId === cmd.buildingId).reduce((t, x) => t + x.deltaShare, 0);
     if (company.sectorId === cmd.sectorId) {
-      // Own plant: buy back private shares (T -> Fk) or SPO privatise part of city's stake (Fk -> T)
-      if (delta > 0 && company.privateShare < delta) return { ok: false, message: `У частных инвесторов только ${(company.privateShare * 100).toFixed(1)}%` };
+      // Own plant: buy back private shares (T -> Fk) or SPO privatise part of city's stake (Fk -> T);
+      // shares escrowed by a pending foreign takeover are not for sale meanwhile
+      const ownFloat = Math.max(0, company.privateShare - escrowed);
+      if (delta > 0 && ownFloat < delta) return { ok: false, message: `У частных инвесторов в свободном обращении только ${(ownFloat * 100).toFixed(1)}%` };
       if (delta < 0 && company.cityShare < -delta) return { ok: false, message: `У города только ${(company.cityShare * 100).toFixed(1)}%` };
       if (delta > 0) {
         const err = pay();
@@ -1465,6 +1538,7 @@ export class WorldSimulation {
         this.persistSectorState(cmd.sectorId);
         const alert = `⚠️ ОКНО УВЕДОМЛЕНИЯ О ПОГЛОЩЕНИИ: Сектор ${cmd.sectorId} скупает ${pct} «${company.nameRu}» (итого ${(resultingShare * 100).toFixed(1)}% > 25%). У Мэрии Сектора ${company.sectorId} есть ${FOREIGN_TAKEOVER_NOTICE_DAYS} игр. дн. на преимущественный выкуп!`;
         this.pushSystemChat(alert);
+        this.onMayorAlert?.(company.sectorId, { title: "⚠️ Враждебное поглощение", body: alert, tag: `takeover-${b.id}` });
         return { ok: true, message: alert, noticeAlerts: [alert] };
       }
       this.engine.bookLedgerEntry(company.sectorId, [
@@ -1555,24 +1629,7 @@ export class WorldSimulation {
     }
 
     // Refund the foreign bidder's escrowed funds
-    const bidderReg = this.engine.getRegion(tk.bidderSectorId);
-    if (tk.source === "swf") {
-      bidderReg.swfBalanceWcu += bidWcu;
-    } else {
-      const bidderLocal = mulRate(bidWcu, bidderReg.fxRatePerWcu);
-      bidderReg.treasuryCashAtCb += bidderLocal;
-      this.engine.bookLedgerEntry(tk.bidderSectorId, [
-        "Refunded takeover escrow (World -> T)",
-        0n,
-        0n,
-        0n,
-        bidderLocal,
-        0n,
-        0n,
-        -bidderLocal,
-      ]);
-    }
-    this.persistSectorState(tk.bidderSectorId);
+    this.refundTakeoverEscrow(tk);
 
     const cityShare = Math.min(1, Number((b.cityEquityShare + tk.deltaShare).toFixed(4)));
     const updated: BuildingDto = { ...b, cityEquityShare: cityShare };
@@ -1835,6 +1892,11 @@ export class WorldSimulation {
     const alerts: string[] = [];
     for (const sectorId of this.engine.evaluateAiGovernorTimeouts(Date.now())) {
       alerts.push(`🤖 Сектор ${sectorId}: мэр не заходил 48 ч — управление принял ИИ-Губернатор`);
+      this.onMayorAlert?.(sectorId, {
+        title: "🤖 Город под управлением ИИ-Губернатора",
+        body: "Вас не было 48 часов. Зайдите в игру — управление вернётся к вам сразу.",
+        tag: "ai-governor",
+      });
     }
     for (const sectorId of SECTOR_IDS) {
       const reg = this.engine.getRegion(sectorId);
@@ -1892,6 +1954,7 @@ export class WorldSimulation {
       : spec.responderBuildingId
         ? `нет службы ${spec.responderBuildingId} рядом — ЧП затянется`
         : "служба не требуется";
+    this.onMayorAlert?.(sp.sectorId, { title: `🚨 ${spec.nameRu}`, body: `${sp.causeRu} — ${crew}`, tag: `emg-${sp.emergencyId}` });
     return `🚨 Сектор ${sp.sectorId}: ${spec.nameRu} (${sp.causeRu}) — ${crew}`;
   }
 
@@ -2425,6 +2488,8 @@ export class WorldSimulation {
     for (let i = this.pendingTakeovers.length - 1; i >= 0; i--) {
       const tk = this.pendingTakeovers[i]!;
       if (tk.bidderSectorId === sectorId || tk.targetSectorId === sectorId) {
+        // A neighbour bidding on this city's plants gets its escrow back
+        if (tk.targetSectorId === sectorId && tk.bidderSectorId !== sectorId) this.refundTakeoverEscrow(tk);
         this.pendingTakeovers.splice(i, 1);
       }
     }
@@ -2592,12 +2657,8 @@ export class WorldSimulation {
       if ([...this.buildings.values()].some((b) => b.catalogId === entry.id)) {
         return { ok: false, message: `«${entry.nameRu}» уже заложен в Ядре — внесите долю в него` };
       }
-      const metropolises = SECTOR_IDS.filter(
-        (s) => this.computeSectorStage(Math.round(this.engine.getRegion(s).classes.reduce((t, c) => t + c.households, 0))) === "S5"
-      ).length;
-      if (metropolises < 3) {
-        return { ok: false, message: `Мегапроекты открываются, когда 3 из 5 регионов достигнут этапа S5 (сейчас ${metropolises})` };
-      }
+      const locked = this.megaprojectsLockedReason();
+      if (locked) return { ok: false, message: locked };
     }
     const allowsCoastOrSea =
       entry.id === "EXT-05" ||
@@ -3078,6 +3139,9 @@ export class WorldSimulation {
       return { ok: false, message: `Недостаточно средств казны на перезонирование (${fmtSym(rezoneFee, sym)})` };
     }
     reg.treasuryCashAtCb -= rezoneFee;
+    // Redevelopment clears 65% of the built lots: their homes leave the housing stock until rebuilt denser
+    const clearedShare = z.occupancyRatio * 0.65;
+    reg.dwellings = Math.max(0, reg.dwellings - clearedShare * tiles * (DWELLINGS_PER_RESIDENTIAL_TILE[z.zoneKind] ?? 0));
     this.persistSectorState(sectorId);
 
     const updated: ZoneDto = {
