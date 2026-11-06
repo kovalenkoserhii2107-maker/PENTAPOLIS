@@ -40,8 +40,13 @@ import { AUTUMN_TINTS, SPECIES_TINTS, createSpeciesGeometry, createTrunkGeometry
 
 const MAX_TREES_PER_SPECIES = 30_000;
 const TREE_SPECIES: readonly TreeSpecies[] = ["broadleaf", "conifer", "poplar", "bush"];
-const SUN_POSITION = new THREE.Vector3(220, 620, 180);
-const SUN_TARGET = new THREE.Vector3(500, 0, 500);
+/**
+ * Towards the sun: from the camera's side and to its left, so the left-facing (+Z) facades are
+ * sunlit, the right-facing (+X) ones in half light, and shadows fall behind buildings (TheoTown look).
+ */
+const SUN_DIRECTION = new THREE.Vector3(0.25, 0.75, 0.61).normalize();
+/** Where sun glints on the sea come from (a low back light reads best in this camera). */
+const GLINT_DIRECTION = new THREE.Vector3(-280, 620, -320).normalize();
 /** Direction from the ground towards the isometric camera. */
 const VIEW_DIRECTION = new THREE.Vector3(1, 0.8165, 1).normalize();
 
@@ -147,6 +152,7 @@ export class PeninsulaScene {
   private foliageShadows: THREE.InstancedMesh | null = null;
   private readonly foliageCrowns = new Map<TreeSpecies, THREE.InstancedMesh>();
   private terrain: TerrainSurface | null = null;
+  private sun: THREE.DirectionalLight | null = null;
   private lastFoliageSignature = "";
   private depositsCache: readonly ResourceDepositSite[] = [];
   private readonly markersGroup = new THREE.Group();
@@ -216,21 +222,16 @@ export class PeninsulaScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
-    // Crisp sun + hemisphere bounce lighting (TheoTown daylight clarity)
-    const hemi = new THREE.HemisphereLight(0xe0f2fe, 0x1e293b, 0.85);
+    // Warm sun + sky/grass bounce: bright, readable facades in daylight
+    const hemi = new THREE.HemisphereLight(0xdcecff, 0x7a8a58, 1.05);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfffbeb, 1.15);
-    sun.position.copy(SUN_POSITION);
-    sun.target.position.copy(SUN_TARGET);
+    const sun = new THREE.DirectionalLight(0xfff1dc, 1.75);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -550;
-    sun.shadow.camera.right = 550;
-    sun.shadow.camera.top = 550;
-    sun.shadow.camera.bottom = -550;
-    sun.shadow.camera.near = 50;
-    sun.shadow.camera.far = 1500;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.02;
+    this.sun = sun;
     this.scene.add(sun);
     this.scene.add(sun.target);
 
@@ -500,8 +501,7 @@ export class PeninsulaScene {
       this.scene.remove(this.terrain.mesh);
       this.terrain.dispose();
     }
-    const sunDir = SUN_POSITION.clone().sub(SUN_TARGET).normalize();
-    this.terrain = createTerrainSurface(this.renderer, surfaceBytes, sunDir, VIEW_DIRECTION);
+    this.terrain = createTerrainSurface(this.renderer, surfaceBytes, SUN_DIRECTION, VIEW_DIRECTION, GLINT_DIRECTION);
     if (this.undergroundView) this.terrain.material.color.setHex(0x2a2f45);
     this.scene.add(this.terrain.mesh);
 
@@ -718,7 +718,7 @@ export class PeninsulaScene {
     let trunks = 0;
     let shadows = 0;
     const shadowDummy = new THREE.Object3D();
-    const sunAway = SUN_TARGET.clone().sub(SUN_POSITION).setY(0).normalize();
+    const sunAway = SUN_DIRECTION.clone().negate().setY(0).normalize();
 
     const placeTree = (species: TreeSpecies, wx: number, wz: number, scale: number, hVal: number, autumn = false) => {
       const mesh = this.foliageCrowns.get(species)!;
@@ -1062,6 +1062,29 @@ export class PeninsulaScene {
       this.target.z + dist
     );
     this.camera.lookAt(this.target);
+
+    // The shadow map covers only what is on screen, so building shadows stay crisp up close
+    if (this.sun) {
+      const halfW = (this.frustumHalfHeight * aspect) / this.zoomLevel;
+      const extent = Math.min(600, Math.max(40, halfW * 1.6));
+      const cam = this.sun.shadow.camera;
+      cam.left = -extent;
+      cam.right = extent;
+      cam.top = extent;
+      cam.bottom = -extent;
+      cam.near = 10;
+      cam.far = 2400;
+      cam.updateProjectionMatrix();
+      this.sun.target.position.copy(this.target);
+      this.sun.position.copy(this.target).addScaledVector(SUN_DIRECTION, 1000);
+      this.sun.target.updateMatrixWorld();
+      // From far out shadows are sub-pixel: freeze the shadow pass (one last refresh on the way out)
+      const liveShadows = this.zoomLevel >= 1.6;
+      if (liveShadows !== this.sun.shadow.autoUpdate) {
+        this.sun.shadow.autoUpdate = liveShadows;
+        this.sun.shadow.needsUpdate = true;
+      }
+    }
   }
 
   private screenToTile(clientX: number, clientY: number): HoveredTileInfo | null {

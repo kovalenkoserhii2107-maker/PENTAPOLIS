@@ -28,6 +28,38 @@ const WIDTH_BY_KIND: Readonly<Record<NetworkKind, number>> = {
 const URBAN_STREET_KINDS = new Set<NetworkKind>(["street_2lane", "avenue_4lane", "express_6lane"]);
 const ROAD_KINDS = new Set<NetworkKind>(["street_2lane", "avenue_4lane", "express_6lane", "heavy_bypass"]);
 
+/** Sidewalk width on each side of an urban street, tiles (≈ 5 m). */
+const SIDEWALK_WIDTH = 0.5;
+
+/** Concrete paving slabs with a darker kerb along the road edge (v = 0). */
+function createSidewalkCanvas(): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#c9c5bc";
+  ctx.fillRect(0, 0, 32, 32);
+  // Slight per-slab tone variation
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const t = ((x * 7 + y * 13) % 5) * 4;
+      ctx.fillStyle = `rgb(${196 + t}, ${192 + t}, ${183 + t})`;
+      ctx.fillRect(x * 8 + 1, y * 8 + 1, 7, 7);
+    }
+  }
+  ctx.fillStyle = "#a9a59c";
+  for (let i = 0; i <= 32; i += 8) {
+    ctx.fillRect(i, 0, 1, 32);
+    ctx.fillRect(0, i, 32, 1);
+  }
+  // Kerb stones on the road side
+  ctx.fillStyle = "#8d8a84";
+  ctx.fillRect(0, 0, 32, 4);
+  ctx.fillStyle = "#e4e1da";
+  ctx.fillRect(0, 4, 32, 1);
+  return canvas;
+}
+
 function createLaneMarkingBaseCanvas(lanes: 4 | 6, asphaltHex: string): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = 64;
@@ -71,6 +103,7 @@ export class RoadMeshBuilder {
   private readonly segmentsGroup = new THREE.Group();
   private undergroundView = false;
   private readonly signalSets: TrafficSignalLampSet[] = [];
+  private readonly sidewalkCanvas = createSidewalkCanvas();
   private readonly laneCanvas4Good = createLaneMarkingBaseCanvas(4, "#334155");
   private readonly laneCanvas6Good = createLaneMarkingBaseCanvas(6, "#334155");
   private readonly laneCanvas4Worn = createLaneMarkingBaseCanvas(4, "#57534e");
@@ -179,17 +212,29 @@ export class RoadMeshBuilder {
       const midZ = seg.fromY + dz * 0.5;
       const deckHeight = elevated ? 0.26 : 0.12;
 
-      // 3. Light-grey sidewalk & curb base (`0xcbd5e1`, width `roadWidth + 0.55`, `yDeck - 0.02`)
+      // 3. Paved sidewalks with kerbs on both sides, a hair below the asphalt so crossing roads
+      //    and side-street mouths always draw on top of them
       if (isUrbanStreet) {
-        const swWidth = width + 0.55;
-        const swGeo = new THREE.BoxGeometry(length + swWidth * 0.28, deckHeight, swWidth);
-        const swMat = new THREE.MeshLambertMaterial({ color: 0xcbd5e1 });
-        const sidewalk = new THREE.Mesh(swGeo, swMat);
-        sidewalk.position.set(midX, yDeck - 0.02, midZ);
-        sidewalk.rotation.y = angleY;
-        sidewalk.receiveShadow = true;
-        sidewalk.castShadow = elevated;
-        this.segmentsGroup.add(sidewalk);
+        const swLength = length + width + SIDEWALK_WIDTH * 2;
+        const nx = -dz / length;
+        const nz = dx / length;
+        for (const side of [-1, 1] as const) {
+          const tex = new THREE.CanvasTexture(this.sidewalkCanvas);
+          tex.wrapS = THREE.RepeatWrapping;
+          tex.wrapT = THREE.RepeatWrapping;
+          tex.magFilter = THREE.NearestFilter;
+          tex.colorSpace = THREE.SRGBColorSpace;
+          // One slab block per half tile; kerb (texture top row) faces the road on both sides
+          tex.repeat.set(swLength / 0.5, side === 1 ? -1 : 1);
+          const swGeo = new THREE.BoxGeometry(swLength, deckHeight, SIDEWALK_WIDTH);
+          const sidewalk = new THREE.Mesh(swGeo, new THREE.MeshLambertMaterial({ map: tex }));
+          const off = (width * 0.5 + SIDEWALK_WIDTH * 0.5) * side;
+          sidewalk.position.set(midX + nx * off, yDeck - 0.012, midZ + nz * off);
+          sidewalk.rotation.y = angleY;
+          sidewalk.receiveShadow = true;
+          sidewalk.castShadow = elevated;
+          this.segmentsGroup.add(sidewalk);
+        }
       }
 
       // 4. Main road / rail / metro deck
