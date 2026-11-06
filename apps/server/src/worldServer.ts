@@ -11,6 +11,20 @@
 import {
   BUS_LICENSE_FEE_PER_BUS_PER_MONTH_UNITS,
   CANONICAL_EMERGENCIES,
+  CARGO_LANES,
+  POWER_RING_PREMIUM,
+  fusionPowerShares,
+  getCustomsTables,
+  isListable,
+  laneOpen,
+  megaprojectDividends,
+  megaprojectStatus,
+  noticeDaysFor,
+  runGasNetwork,
+  runPowerRing,
+  stakeMonthlyDividend,
+  valueListedCompany,
+  wholesalePowerPricePerMwh,
   ON_SITE_HOURS,
   UNATTENDED_DURATION_MULTIPLIER,
   buildAdvisors,
@@ -65,6 +79,16 @@ import {
   type PeninsulaMapData,
   type RoadServiceLevel,
   type AdvisorDto,
+  type BorderPostDto,
+  type BorderPostStatsDto,
+  type BorderSidePolicyDto,
+  type CrossBorderFlow,
+  type ForeignStakeRecord,
+  type GasNetworkResult,
+  type ListedCompanyDto,
+  type MegaprojectDto,
+  type MegaprojectStakeRecord,
+  type SectorPowerRingDto,
   type CityModelResult,
   type EmergencySpawn,
   type SectorAutoStatsDto,
@@ -81,6 +105,17 @@ import {
   type ZoneDto,
 } from "@pentapolis/shared-sim";
 import { WorldDatabase } from "./db.ts";
+import {
+  borderLinks,
+  borderPostSides,
+  borderPostStats,
+  crossingTerms,
+  describePolicy,
+  isBlockaded,
+  materialTradePartners,
+  newBorderPost,
+  sideOf,
+} from "./geopolitics.ts";
 
 export interface CommandOutcome {
   readonly ok: boolean;
@@ -92,6 +127,11 @@ const SECTOR_IDS: readonly SectorId[] = [1, 2, 3, 4, 5];
 
 /** Tier 3 tactical tick (GDD §1.4): 20 real seconds = 10 game minutes. */
 export const TACTICAL_TICK_GAME_SECONDS = 600;
+
+/** Power plants that generate (substations, gas nodes and holders only route). */
+const GENERATOR_IDS: ReadonlySet<string> = new Set(["ENG-01", "ENG-02", "ENG-03"]);
+/** AI Governor repairs roads below this health when the treasury allows (GDD §1.2). */
+const AI_GOVERNOR_REPAIR_BELOW = 50;
 
 const BUS_OPERATORS = ["Горавтотранс", "ЭкспрессЛайн", "Сити-Бас", "Транзит-Плюс", "Полуостров-Авто", "Пятиград-Тур"];
 
@@ -108,6 +148,9 @@ const TRAFFIC_AFFECTING_COMMANDS: ReadonlySet<ClientCommand["type"]> = new Set([
   "create_bus_route",
   "delete_bus_route",
   "repair_road",
+  "set_border_policy",
+  "contribute_megaproject",
+  "trade_stake",
 ]);
 
 function fmtSym(amount: Money, symbol: string): string {
@@ -158,6 +201,13 @@ export class WorldSimulation {
   private lastConstruction: { sectors: SectorConstructionStatsDto[]; zoneSites: ZoneSiteStatusDto[] } | null = null;
   private city: CityModelResult | null = null;
   private autoStats: SectorAutoStatsDto[] = [];
+  private readonly borderPosts = new Map<string, BorderPostDto>();
+  private borderStats: BorderPostStatsDto[] = [];
+  private crossBorderFlows: readonly CrossBorderFlow[] = [];
+  private gas: GasNetworkResult | null = null;
+  /** Megaproject contributions in WCU minor units, keyed `buildingId|sectorId`. */
+  private readonly megaStakes = new Map<string, MegaprojectStakeRecord>();
+  private readonly foreignStakes: ForeignStakeRecord[] = [];
   private readonly fleets = new Map<SectorId, SectorFleetState>(
     SECTOR_IDS.map((sectorId) => [sectorId, { sectorId, fleet: [0, 0, 0, 0, 0] }])
   );
@@ -293,6 +343,19 @@ export class WorldSimulation {
     for (const route of this.db.loadBusRoutes()) {
       this.busRoutes.set(route.id, route);
     }
+    for (const post of this.db.loadBorderPosts()) {
+      this.borderPosts.set(post.id, post);
+    }
+    for (const st of this.db.loadMegaprojectStakes()) {
+      this.megaStakes.set(`${st.buildingId}|${st.sectorId}`, {
+        buildingId: st.buildingId,
+        sectorId: st.sectorId,
+        contributedWcu: BigInt(st.contributedWcuMinor),
+      });
+    }
+    for (const st of this.db.loadEquityStakes()) {
+      this.foreignStakes.push({ buildingId: st.buildingId, holderSector: st.holderSector, share: st.share });
+    }
     for (const sectorId of SECTOR_IDS) {
       const fleet = this.db.getMeta(`fleet:S${sectorId}`);
       if (fleet) {
@@ -360,6 +423,11 @@ export class WorldSimulation {
     this.totalGameSeconds += deltaGameSeconds;
     this.db.setMeta("totalGameSeconds", String(this.totalGameSeconds));
 
+    for (const alert of this.applyDueBorderChanges()) {
+      alerts.push(alert);
+      this.pushSystemChat(alert);
+    }
+
     const tacticalSlot = Math.floor(this.totalGameSeconds / TACTICAL_TICK_GAME_SECONDS);
     if (tacticalSlot !== this.lastTacticalSlot) {
       this.lastTacticalSlot = tacticalSlot;
@@ -402,6 +470,8 @@ export class WorldSimulation {
         if (rep.budgetBalance > 0n) {
           reg.treasuryCashAtCb += mulRate(rep.budgetBalance, 0.04);
         }
+        // Sprint 7 cross-border settlement (customs, visas, power ring, gas, dividends) for every sector
+        reg.treasuryCashAtCb += this.monthlyGeopoliticsSettlement(rep.sectorId);
         // Road Service bill and bus licence fees (Sprint 5) for mayor-run sectors
         if (this.occupiedBySector.get(rep.sectorId)) {
           reg.treasuryCashAtCb -= this.sectorRoadServiceCost(rep.sectorId);
@@ -547,6 +617,11 @@ export class WorldSimulation {
       buildings: [...this.buildings.values()],
       hours,
       districtHappiness: this.city ? new Map(this.city.districts.map((d) => [d.zoneId, d.happiness])) : undefined,
+      plantOutputMultiplier: this.gas?.outputMultiplier,
+      tradePartners: materialTradePartners(
+        [...this.borderPosts.values()],
+        new Set(this.borderStats.filter((st) => st.roadLinked).map((st) => st.postId))
+      ),
       sectors: SECTOR_IDS.map((sectorId) => {
         const reg = this.engine.getRegion(sectorId);
         return {
@@ -640,7 +715,7 @@ export class WorldSimulation {
         gameDay: day,
         sectors: SECTOR_IDS.filter((s) => this.occupiedBySector.get(s)).map((sectorId) => {
           const reg = this.engine.getRegion(sectorId);
-          const power = this.computeSectorPower(sectorId);
+          const power = this.effectivePower(sectorId);
           return {
             sectorId,
             activeDecreeIds: [...reg.levers.activeDecreeIds],
@@ -656,6 +731,346 @@ export class WorldSimulation {
         active: this.emergencies,
       });
       for (const sp of spawns) alerts.push(this.spawnEmergency(sp));
+    }
+
+    // Border queues beyond two hours become the KPP blockade emergency (GDD §6.6 #10)
+    for (const st of this.borderStats) {
+      const post = this.borderPosts.get(st.postId);
+      if (!post || !isBlockaded(st)) continue;
+      if (this.emergencies.some((e) => e.emergencyId === "KPP_BLOCKADE" && e.targetRef === post.id)) continue;
+      alerts.push(
+        this.spawnEmergency({
+          emergencyId: "KPP_BLOCKADE",
+          sectorId: post.sectorA,
+          tileX: Math.round(post.tileX + post.width / 2),
+          tileY: Math.round(post.tileY + post.depth / 2),
+          targetRef: post.id,
+          causeRu: `очередь фур ${st.queueMinutes} мин при пропускной ${st.capacityTrucksPerHour} фур/ч`,
+        })
+      );
+    }
+
+    alerts.push(...this.runAiGovernors());
+    return alerts;
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // Sprint 7: border posts, gas & power ring, megaprojects, exchange, AI governor
+  // ---------------------------------------------------------------------------------------------
+
+  private roadLinks() {
+    const stats = new Map(this.borderStats.map((s) => [s.postId, s]));
+    return borderLinks([...this.borderPosts.values()], this.segments.values(), ["street_2lane", "avenue_4lane", "express_6lane", "heavy_bypass"], (post) =>
+      (stats.get(post.id)?.queueMinutes ?? 0) / 60
+    );
+  }
+
+  /** Pipelines and HV lines join through posts only while the hydrocarbon lane is open both ways. */
+  private utilityLinks(kind: "pipeline" | "hv_power") {
+    const open = [...this.borderPosts.values()].filter((p) => {
+      const a = p.sides[0]!;
+      const b = p.sides[1]!;
+      return kind === "hv_power" ? a.visaRegime !== "closed" && b.visaRegime !== "closed" : laneOpen(a, b, "hydrocarbons") && laneOpen(b, a, "hydrocarbons");
+    });
+    return borderLinks(open, this.segments.values(), [kind]);
+  }
+
+  private postLevel(postId: string): number {
+    return this.buildings.get(postId)?.level ?? 1;
+  }
+
+  private applyDueBorderChanges(): string[] {
+    const alerts: string[] = [];
+    for (const post of this.borderPosts.values()) {
+      const due = post.pending.filter((c) => c.effectiveAtGameSeconds <= this.totalGameSeconds);
+      if (due.length === 0) continue;
+      let sides = [...post.sides];
+      for (const change of due) {
+        sides = sides.map((sd) => (sd.sectorId === change.sectorId ? change.policy : sd));
+        alerts.push(`🛂 КПП #${post.id}: вступила в силу мера Сектора ${change.sectorId} — ${describePolicy(change.policy)}`);
+      }
+      const updated: BorderPostDto = { ...post, sides, pending: post.pending.filter((c) => !due.includes(c)) };
+      this.borderPosts.set(post.id, updated);
+      this.db.upsertBorderPost(updated);
+      this.trafficDirty = true;
+    }
+    return alerts;
+  }
+
+  private handleSetBorderPolicy(cmd: Extract<ClientCommand, { type: "set_border_policy" }>): CommandOutcome {
+    const post = this.borderPosts.get(cmd.postId);
+    const current = post ? sideOf(post, cmd.sectorId) : undefined;
+    if (!post || !current) return { ok: false, message: "Этот КПП не на границе вашего сектора" };
+    this.engine.getRegion(cmd.sectorId).lastMayorActivityEpochMs = Date.now();
+
+    const clampDuty = (v: number) => Math.max(0, Math.min(2, Math.round(v * 1000) / 1000));
+    const importDuty = { ...current.importDuty };
+    const exportDuty = { ...current.exportDuty };
+    for (const lane of CARGO_LANES) {
+      const imp = cmd.importDuty?.[lane];
+      const exp = cmd.exportDuty?.[lane];
+      if (imp !== undefined) importDuty[lane] = clampDuty(imp);
+      if (exp !== undefined) exportDuty[lane] = clampDuty(exp);
+    }
+    const next: BorderSidePolicyDto = {
+      sectorId: cmd.sectorId,
+      visaRegime: cmd.visaRegime ?? current.visaRegime,
+      importDuty,
+      exportDuty,
+      embargo: cmd.embargo ? [...new Set(cmd.embargo.filter((l) => CARGO_LANES.includes(l)))] : current.embargo,
+      inspection: cmd.inspection ?? current.inspection,
+    };
+    const neighbor = post.sectorA === cmd.sectorId ? post.sectorB : post.sectorA;
+    const days = noticeDaysFor(current, next);
+    if (days === 0) {
+      const updated: BorderPostDto = {
+        ...post,
+        sides: post.sides.map((sd) => (sd.sectorId === cmd.sectorId ? next : sd)),
+        pending: post.pending.filter((c) => c.sectorId !== cmd.sectorId),
+      };
+      this.borderPosts.set(post.id, updated);
+      this.db.upsertBorderPost(updated);
+      return { ok: true, message: `КПП #${post.id}: режим Сектора ${cmd.sectorId} обновлён (${describePolicy(next)})` };
+    }
+    // Hostile move: notice window, the neighbour is warned at once (GDD §1.4)
+    const effectiveAt = this.totalGameSeconds + days * 86_400;
+    const descriptionRu = `Сектор ${cmd.sectorId} на КПП #${post.id} вводит: ${describePolicy(next)} — через ${days} игр. дн.`;
+    const updated: BorderPostDto = {
+      ...post,
+      pending: [...post.pending.filter((c) => c.sectorId !== cmd.sectorId), { sectorId: cmd.sectorId, effectiveAtGameSeconds: effectiveAt, descriptionRu, policy: next }],
+    };
+    this.borderPosts.set(post.id, updated);
+    this.db.upsertBorderPost(updated);
+    this.pushSystemChat(`⚠️ ОКНО УВЕДОМЛЕНИЯ для Сектора ${neighbor}: ${descriptionRu}`);
+    return { ok: true, message: descriptionRu, noticeAlerts: [descriptionRu] };
+  }
+
+  private megaprojectList(): MegaprojectDto[] {
+    const stakes = [...this.megaStakes.values()];
+    return [...this.buildings.values()]
+      .filter((b) => b.catalogId.startsWith("MEG-"))
+      .map((b) => megaprojectStatus(b, this.catalogs, stakes));
+  }
+
+  private handleContributeMegaproject(cmd: Extract<ClientCommand, { type: "contribute_megaproject" }>): CommandOutcome {
+    const b = this.buildings.get(cmd.buildingId);
+    if (!b || !b.catalogId.startsWith("MEG-")) return { ok: false, message: "Мегапроект не найден" };
+    const status = megaprojectStatus(b, this.catalogs, [...this.megaStakes.values()]);
+    const remaining = BigInt(status.costWcuMinor) - BigInt(status.fundedWcuMinor);
+    if (remaining <= 0n) return { ok: false, message: "Мегапроект уже полностью профинансирован" };
+    let amount = money(Math.max(0, cmd.amountUnits));
+    if (amount <= 0n) return { ok: false, message: "Укажите сумму взноса в МРЕ" };
+    if (amount > remaining) amount = remaining;
+
+    const reg = this.engine.getRegion(cmd.sectorId);
+    reg.lastMayorActivityEpochMs = Date.now();
+    if (cmd.source === "swf") {
+      if (reg.swfBalanceWcu < amount) {
+        return { ok: false, message: `В Фонде благосостояния только ${formatMoney(reg.swfBalanceWcu)} МРЕ` };
+      }
+      reg.swfBalanceWcu -= amount;
+    } else {
+      const local = mulRate(amount, reg.fxRatePerWcu);
+      if (reg.treasuryCashAtCb < local) {
+        return { ok: false, message: `Недостаточно средств казны: нужно ${fmtSym(local, currencySymbol(reg.currency))}` };
+      }
+      reg.treasuryCashAtCb -= local;
+    }
+    const key = `${b.id}|${cmd.sectorId}`;
+    const prev = this.megaStakes.get(key)?.contributedWcu ?? 0n;
+    const rec: MegaprojectStakeRecord = { buildingId: b.id, sectorId: cmd.sectorId, contributedWcu: prev + amount };
+    this.megaStakes.set(key, rec);
+    this.db.upsertMegaprojectStake(b.id, cmd.sectorId, rec.contributedWcu.toString());
+    this.persistSectorState(cmd.sectorId);
+
+    const after = megaprojectStatus(b, this.catalogs, [...this.megaStakes.values()]);
+    if (after.status !== "funding" && b.stalledAwaitingPrivate) {
+      const started: BuildingDto = { ...b, stalledAwaitingPrivate: false };
+      this.buildings.set(b.id, started);
+      this.db.upsertBuilding(started);
+      this.pushSystemChat(`🏗️ Мегапроект «${after.nameRu}» профинансирован: стройка в Центральном Ядре началась!`);
+    }
+    const share = after.stakes.find((st) => st.sectorId === cmd.sectorId)?.share ?? 0;
+    return {
+      ok: true,
+      message: `Взнос ${formatMoney(amount)} МРЕ в «${after.nameRu}» (${cmd.source === "swf" ? "из Фонда" : "из казны"}). Доля Сектора ${cmd.sectorId}: ${(share * 100).toFixed(1)}%`,
+    };
+  }
+
+  private listedCompanies(): ListedCompanyDto[] {
+    const exchanges = new Set(
+      [...this.buildings.values()]
+        .filter((b) => b.catalogId === "FIN-02" && b.constructionProgress >= 1)
+        .map((b) => b.sectorId)
+    );
+    const out: ListedCompanyDto[] = [];
+    for (const b of this.buildings.values()) {
+      if (b.sectorId === "core" || !exchanges.has(b.sectorId) || !isListable(b.catalogId)) continue;
+      if (b.constructionProgress < 1 || b.stalledAwaitingPrivate) continue;
+      const reg = this.engine.getRegion(b.sectorId);
+      out.push(
+        valueListedCompany({
+          catalogs: this.catalogs,
+          building: b,
+          fxRatePerWcu: reg.fxRatePerWcu,
+          keyRate: reg.levers.keyRate,
+          expectedRoi: reg.factories.find((f) => f.projectId === b.id)?.expectedAnnualRoi,
+          foreignStakes: this.foreignStakes,
+        })
+      );
+    }
+    return out;
+  }
+
+  private handleTradeStake(cmd: Extract<ClientCommand, { type: "trade_stake" }>): CommandOutcome {
+    const company = this.listedCompanies().find((c) => c.buildingId === cmd.buildingId);
+    if (!company) return { ok: false, message: "Компания не котируется: нужна Биржевая площадка FIN-02 в её секторе" };
+    const delta = Math.round(Math.max(-1, Math.min(1, cmd.deltaShare)) * 10_000) / 10_000;
+    if (delta === 0) return { ok: false, message: "Укажите долю для сделки" };
+    const buyer = this.engine.getRegion(cmd.sectorId);
+    buyer.lastMayorActivityEpochMs = Date.now();
+    const home = this.engine.getRegion(company.sectorId);
+    const valueHome = mulRate(BigInt(company.marketCapLocalMinor), Math.abs(delta));
+    const valueWcu = mulRate(valueHome, 1 / home.fxRatePerWcu);
+    const b = this.buildings.get(company.buildingId)!;
+    const pct = `${(Math.abs(delta) * 100).toFixed(1)}%`;
+
+    const pay = (): string | null => {
+      if (cmd.source === "swf") {
+        if (buyer.swfBalanceWcu < valueWcu) return `В Фонде благосостояния недостаточно МРЕ (нужно ${formatMoney(valueWcu)})`;
+        buyer.swfBalanceWcu -= valueWcu;
+      } else {
+        const local = mulRate(valueWcu, buyer.fxRatePerWcu);
+        if (buyer.treasuryCashAtCb < local) return `Недостаточно средств казны (нужно ${fmtSym(local, currencySymbol(buyer.currency))})`;
+        buyer.treasuryCashAtCb -= local;
+      }
+      return null;
+    };
+    const receive = () => {
+      if (cmd.source === "swf") buyer.swfBalanceWcu += valueWcu;
+      else buyer.treasuryCashAtCb += mulRate(valueWcu, buyer.fxRatePerWcu);
+    };
+
+    if (company.sectorId === cmd.sectorId) {
+      // Own plant: buy back private shares or privatise part of the city's stake
+      if (delta > 0 && company.privateShare < delta) return { ok: false, message: `У частных инвесторов только ${(company.privateShare * 100).toFixed(1)}%` };
+      if (delta < 0 && company.cityShare < -delta) return { ok: false, message: `У города только ${(company.cityShare * 100).toFixed(1)}%` };
+      if (delta > 0) {
+        const err = pay();
+        if (err) return { ok: false, message: err };
+      } else receive();
+      const cityShare = Math.max(0, Math.min(1, b.cityEquityShare + delta));
+      const updated: BuildingDto = { ...b, cityEquityShare: Number(cityShare.toFixed(4)) };
+      this.buildings.set(b.id, updated);
+      this.db.upsertBuilding(updated);
+      const proj = home.factories.find((f) => f.projectId === b.id);
+      if (proj) {
+        proj.cityShare = updated.cityEquityShare;
+        proj.privateShare = Math.max(0, 1 - updated.cityEquityShare);
+      }
+      this.persistSectorState(cmd.sectorId);
+      return {
+        ok: true,
+        message:
+          delta > 0
+            ? `Мэрия выкупила ${pct} «${company.nameRu}» у частных инвесторов (доля города ${(cityShare * 100).toFixed(1)}%)`
+            : `Приватизация: ${pct} «${company.nameRu}» продано на бирже за ${fmtSym(mulRate(valueWcu, buyer.fxRatePerWcu), currencySymbol(buyer.currency))}`,
+      };
+    }
+
+    // A neighbour's plant: buy from private investors or sell the stake back
+    let stake = this.foreignStakes.find((f) => f.buildingId === b.id && f.holderSector === cmd.sectorId);
+    if (delta > 0 && company.privateShare < delta) return { ok: false, message: `В свободном обращении только ${(company.privateShare * 100).toFixed(1)}%` };
+    if (delta < 0 && (stake?.share ?? 0) < -delta) return { ok: false, message: "У вас нет такой доли" };
+    if (delta > 0) {
+      const err = pay();
+      if (err) return { ok: false, message: err };
+    } else receive();
+    if (!stake) {
+      stake = { buildingId: b.id, holderSector: cmd.sectorId, share: 0 };
+      this.foreignStakes.push(stake);
+    }
+    stake.share = Number(Math.max(0, stake.share + delta).toFixed(4));
+    this.db.upsertEquityStake(b.id, cmd.sectorId, stake.share);
+    this.persistSectorState(cmd.sectorId);
+    return {
+      ok: true,
+      message: `${delta > 0 ? "Куплено" : "Продано"} ${pct} «${company.nameRu}» (Сектор ${company.sectorId}) за ${formatMoney(valueWcu)} МРЕ ${cmd.source === "swf" ? "из Фонда" : "через казну"}`,
+    };
+  }
+
+  /** Power balance of a sector before the ring: generators (gas turbines need gas), fusion share. */
+  private basePower(sectorId: SectorId): { supplyMw: number; demandMw: number } {
+    const p = this.computeSectorPower(sectorId);
+    const fusion = fusionPowerShares(this.megaprojectList()).get(sectorId) ?? 0;
+    return { supplyMw: Math.round((p.supplyMw + fusion) * 10) / 10, demandMw: p.demandMw };
+  }
+
+  private powerRing(): SectorPowerRingDto[] {
+    return runPowerRing({
+      segments: [...this.segments.values()],
+      links: this.utilityLinks("hv_power"),
+      supplyDemand: new Map(SECTOR_IDS.map((s) => [s, this.basePower(s)])),
+    });
+  }
+
+  /** Supply after ring imports/exports — what blackouts and advisors look at. */
+  private effectivePower(sectorId: SectorId): { supplyMw: number; demandMw: number } {
+    const ring = this.powerRing().find((r) => r.sectorId === sectorId)!;
+    return { supplyMw: Math.round((ring.supplyMw + ring.importedMw - ring.exportedMw) * 10) / 10, demandMw: ring.demandMw };
+  }
+
+  /**
+   * One game month of cross-border money for a sector (local minor units): customs & visa revenue,
+   * power-ring and gas trade, megaproject and foreign-stake dividends.
+   */
+  private monthlyGeopoliticsSettlement(sectorId: SectorId): Money {
+    const reg = this.engine.getRegion(sectorId);
+    let total = 0n;
+    for (const st of this.borderStats) {
+      const rev = st.revenue.find((r) => r.sectorId === sectorId);
+      if (rev) total += BigInt(rev.dutyMinor) + BigInt(rev.visaMinor);
+    }
+    // Power ring: importers pay +20% over wholesale; exporters receive it (720 h a month)
+    const ring = this.powerRing().find((r) => r.sectorId === sectorId);
+    const mwhPrice = wholesalePowerPricePerMwh() * (1 + POWER_RING_PREMIUM);
+    if (ring) total += mulRate(money(mwhPrice * 720 * (ring.exportedMw - ring.importedMw)), reg.fxRatePerWcu);
+    // Gas: sold across the border at the delivered domestic cost per 1,000 m³ (sheet 19)
+    const gas = this.gas?.sectors.find((g) => g.sectorId === sectorId);
+    const gasPrice = getCustomsTables().gasRoutes.get("domestic")!.deliveredCostPerKm3Units;
+    if (gas) total += mulRate(money(gasPrice * 720 * (gas.exportedKm3PerHour - gas.importedKm3PerHour)), reg.fxRatePerWcu);
+    // Megaproject dividends (WCU) and dividends on stakes in neighbours' plants
+    total += mulRate(megaprojectDividends(this.megaprojectList()).get(sectorId) ?? 0n, reg.fxRatePerWcu);
+    const companies = new Map(this.listedCompanies().map((c) => [c.buildingId, c]));
+    for (const stake of this.foreignStakes) {
+      const c = companies.get(stake.buildingId);
+      if (!c || stake.holderSector !== sectorId) continue;
+      const home = this.engine.getRegion(c.sectorId);
+      total += mulRate(stakeMonthlyDividend(c, stake.share), reg.fxRatePerWcu / home.fxRatePerWcu);
+    }
+    return total;
+  }
+
+  /**
+   * AI Governor (GDD §1.2): after 48 real hours without the mayor it runs the region conservatively —
+   * Taylor rule, 6% duty, standard Road Service and repairs of crumbling roads within budget.
+   */
+  private runAiGovernors(): string[] {
+    const alerts: string[] = [];
+    for (const sectorId of this.engine.evaluateAiGovernorTimeouts(Date.now())) {
+      alerts.push(`🤖 Сектор ${sectorId}: мэр не заходил 48 ч — управление принял ИИ-Губернатор`);
+    }
+    for (const sectorId of SECTOR_IDS) {
+      const reg = this.engine.getRegion(sectorId);
+      if (!reg.isAiGovernor || !this.occupiedBySector.get(sectorId)) continue;
+      this.roadServiceLevel.set(sectorId, 1);
+      const crumbling = [...this.segments.values()].some(
+        (s) => s.sectorId === sectorId && isRoadKind(s.kind) && s.healthPercent < AI_GOVERNOR_REPAIR_BELOW
+      );
+      if (crumbling) {
+        const out = this.handleRepairRoad(sectorId);
+        if (out.ok) alerts.push(`🤖 ИИ-Губернатор Сектора ${sectorId}: ${out.message}`);
+      }
     }
     return alerts;
   }
@@ -752,7 +1167,18 @@ export class WorldSimulation {
   private recomputeTraffic(): TrafficComputation {
     const cal = computeDualCalendar(this.totalGameSeconds, this.catalogs.unitsAndTime.timeBase);
     this.trafficVersion += 1;
+    this.gas = runGasNetwork({
+      catalogs: this.catalogs,
+      segments: [...this.segments.values()],
+      buildings: [...this.buildings.values()],
+      links: this.utilityLinks("pipeline"),
+      sectorIds: SECTOR_IDS,
+    });
+    const roadLinks = this.roadLinks();
     this.traffic = computeTraffic({
+      links: roadLinks,
+      crossing: (postId, from, to, commodity) => crossingTerms(this.borderPosts.get(postId), from, to, commodity),
+      plantOutputMultiplier: this.gas.outputMultiplier,
       catalogs: this.catalogs,
       segments: [...this.segments.values()],
       buildings: [...this.buildings.values()],
@@ -789,11 +1215,25 @@ export class WorldSimulation {
       emergencies: this.emergencies,
       metroZoneIds: this.traffic.metroZoneIds,
       busZoneIds: this.traffic.busZoneIds,
+      pollutionMultiplier: this.gas.pollutionMultiplier,
       sectors: SECTOR_IDS.map((sectorId) => {
         const reg = this.engine.getRegion(sectorId);
         return { sectorId, activeDecreeIds: [...reg.levers.activeDecreeIds], hardshipShare: reg.hardshipShare };
       }),
     });
+    this.crossBorderFlows = this.traffic.crossBorderFlows;
+    const linked = new Set(roadLinks.map((l) => l.id));
+    const residents = new Map(this.city.sectors.map((c) => [c.sectorId, c.residents]));
+    this.borderStats = [...this.borderPosts.values()].map((post) =>
+      borderPostStats({
+        post,
+        level: this.postLevel(post.id),
+        roadLinked: linked.has(post.id),
+        flows: this.crossBorderFlows,
+        fxRatePerWcu: (s) => this.engine.getRegion(s).fxRatePerWcu,
+        residents: (s) => residents.get(s) ?? 0,
+      })
+    );
     this.trafficDirty = false;
     return this.traffic;
   }
@@ -818,7 +1258,7 @@ export class WorldSimulation {
 
   private dossierRegionInput(sectorId: SectorId) {
     const reg = this.engine.getRegion(sectorId);
-    const power = this.computeSectorPower(sectorId);
+    const power = this.effectivePower(sectorId);
     return {
       classes: reg.classes,
       cpi: reg.cpi,
@@ -894,6 +1334,12 @@ export class WorldSimulation {
         return this.handleDeleteBusRoute(cmd.sectorId, cmd.routeId);
       case "repair_road":
         return this.handleRepairRoad(cmd.sectorId, cmd.segmentId);
+      case "set_border_policy":
+        return this.handleSetBorderPolicy(cmd);
+      case "contribute_megaproject":
+        return this.handleContributeMegaproject(cmd);
+      case "trade_stake":
+        return this.handleTradeStake(cmd);
     }
   }
 
@@ -1139,6 +1585,27 @@ export class WorldSimulation {
       if (this.emergencies[i]!.sectorId === sectorId) this.emergencies.splice(i, 1);
     }
     this.fleets.get(sectorId)!.fleet = [0, 0, 0, 0, 0];
+    // Posts built by this sector go with it; on the neighbour's posts its side returns to defaults
+    for (const post of [...this.borderPosts.values()]) {
+      if (this.buildings.get(post.id)?.sectorId === sectorId) {
+        this.borderPosts.delete(post.id);
+        this.db.deleteBorderPost(post.id);
+      } else if (post.sides.some((sd) => sd.sectorId === sectorId)) {
+        const reset: BorderPostDto = {
+          ...post,
+          sides: post.sides.map((sd) => (sd.sectorId === sectorId ? newBorderPost(this.buildings.get(post.id)!, sectorId, sectorId).sides[0]! : sd)),
+          pending: post.pending.filter((c) => c.sectorId !== sectorId),
+        };
+        this.borderPosts.set(post.id, reset);
+        this.db.upsertBorderPost(reset);
+      }
+    }
+    for (let i = this.foreignStakes.length - 1; i >= 0; i--) {
+      if (this.foreignStakes[i]!.holderSector === sectorId) {
+        this.db.upsertEquityStake(this.foreignStakes[i]!.buildingId, sectorId, 0);
+        this.foreignStakes.splice(i, 1);
+      }
+    }
     this.db.setMeta(`fleet:S${sectorId}`, "[0,0,0,0,0]");
     reg.factories.length = 0;
     this.lastConstruction = null;
@@ -1287,6 +1754,24 @@ export class WorldSimulation {
     const w = Math.max(2, entry.footprint.width || 4);
     const d = Math.max(2, entry.footprint.depth || 4);
     const isMegaproject = entry.prefix === "MEG";
+    // Border posts straddle the border with one neighbour (GDD §5.3)
+    let borderNeighbor: SectorId | null = null;
+    if (entry.id === "LOG-07") {
+      const sides = borderPostSides(this.map, cmd.sectorId, cmd.tileX, cmd.tileY, w, d);
+      if (!sides.ok) return { ok: false, message: sides.reason };
+      borderNeighbor = sides.neighbor;
+    }
+    if (isMegaproject) {
+      if ([...this.buildings.values()].some((b) => b.catalogId === entry.id)) {
+        return { ok: false, message: `«${entry.nameRu}» уже заложен в Ядре — внесите долю в него` };
+      }
+      const metropolises = SECTOR_IDS.filter(
+        (s) => this.computeSectorStage(Math.round(this.engine.getRegion(s).classes.reduce((t, c) => t + c.households, 0))) === "S5"
+      ).length;
+      if (metropolises < 3) {
+        return { ok: false, message: `Мегапроекты открываются, когда 3 из 5 регионов достигнут этапа S5 (сейчас ${metropolises})` };
+      }
+    }
     const allowsCoastOrSea =
       entry.id === "EXT-05" ||
       entry.id === "INF-07" ||
@@ -1315,7 +1800,7 @@ export class WorldSimulation {
               message: "Мегапроекты строятся только в нейтральном Центральном Ядре (500, 500)",
             };
           }
-        } else if (ow !== (cmd.sectorId as OwnerCode) && !allowsCoastOrSea) {
+        } else if (ow !== (cmd.sectorId as OwnerCode) && !allowsCoastOrSea && ow !== (borderNeighbor as number | null)) {
           return {
             ok: false,
             message: `Площадка (${tx}, ${ty}) находится вне границ Сектора ${cmd.sectorId}`,
@@ -1424,8 +1909,8 @@ export class WorldSimulation {
       };
     }
 
-    // 100% Municipal / Contour B / Megaproject JV slice
-    const outlay = isMegaproject ? mulRate(fullBuildCostLocal, 0.25) : fullBuildCostLocal;
+    // 100% Municipal / Contour B; megaprojects are founded for free and funded by contributions
+    const outlay = isMegaproject ? 0n : fullBuildCostLocal;
     if (reg.treasuryCashAtCb < outlay) {
       return {
         ok: false,
@@ -1445,12 +1930,27 @@ export class WorldSimulation {
       depth: d,
       orientationDeg: cmd.orientationDeg ?? 0,
       level: 1,
-      constructionProgress: entry.buildTimeGameHours <= 1 ? 1 : 0.5,
-      cityEquityShare: isMegaproject ? 0.25 : 1.0,
-      stalledAwaitingPrivate: false,
+      constructionProgress: isMegaproject ? 0 : entry.buildTimeGameHours <= 1 ? 1 : 0.5,
+      cityEquityShare: isMegaproject ? 0 : 1.0,
+      stalledAwaitingPrivate: isMegaproject,
     };
     this.buildings.set(bld.id, bld);
     this.db.upsertBuilding(bld);
+
+    if (borderNeighbor !== null) {
+      const post = newBorderPost(bld, cmd.sectorId, borderNeighbor);
+      this.borderPosts.set(post.id, post);
+      this.db.upsertBorderPost(post);
+      this.pushSystemChat(`🛂 Сектор ${cmd.sectorId} построил КПП #${post.id} на границе с Сектором ${borderNeighbor}. Подведите к нему дороги с обеих сторон.`);
+      return { ok: true, message: `Построен КПП #${post.id} на границе с Сектором ${borderNeighbor} за ${fmtSym(outlay, sym)}` };
+    }
+    if (isMegaproject) {
+      this.pushSystemChat(`🌐 Сектор ${cmd.sectorId} заложил мегапроект «${entry.nameRu}» в Центральном Ядре — открыт сбор долей.`);
+      return {
+        ok: true,
+        message: `Заложен мегапроект «${entry.nameRu}»: стоимость ${formatMoney(entry.buildCostLv1)} МРЕ, стройка начнётся после сбора взносов`,
+      };
+    }
 
     return {
       ok: true,
@@ -1603,6 +2103,14 @@ export class WorldSimulation {
         message:
           "Нельзя снести завод с частными акционерами без 100% выкупа акций городом (Eminent Domain)!",
       };
+    }
+
+    if (this.foreignStakes.some((f) => f.buildingId === buildingId && f.share > 0)) {
+      return { ok: false, message: "У предприятия есть иностранные акционеры — сначала выкупите их доли" };
+    }
+    if (this.borderPosts.has(buildingId)) {
+      this.borderPosts.delete(buildingId);
+      this.db.deleteBorderPost(buildingId);
     }
 
     const reg = this.engine.getRegion(sectorId);
@@ -1779,9 +2287,11 @@ export class WorldSimulation {
       const cat = this.catalogs.buildingsById.get(b.catalogId);
       if (!cat) continue;
       const stats = computeBuildingAtLevel(cat, this.catalogs.levelCurves, b.level);
-      if (cat.prefix === "ENG") {
-        supplyMw += Math.max(cat.capacityLv1 * b.level, Math.abs(stats.powerMw));
-      } else {
+      if (GENERATOR_IDS.has(cat.id)) {
+        // Gas turbines run only on pipeline gas (GDD §4.3)
+        const fuel = cat.id === "ENG-02" ? (this.gas?.turbineSupply.get(b.id) ?? 0) : 1;
+        if (b.constructionProgress >= 1) supplyMw += Math.max(cat.capacityLv1 * b.level, Math.abs(stats.powerMw)) * fuel;
+      } else if (cat.prefix !== "ENG") {
         demandMw += Math.max(0, stats.powerMw);
       }
     }
@@ -1799,6 +2309,7 @@ export class WorldSimulation {
     const traffic = this.ensureTraffic();
     const city = this.ensureCity();
     const construction = this.constructionSnapshot();
+    const megaprojects = this.megaprojectList();
     const cal = computeDualCalendar(this.totalGameSeconds, this.catalogs.unitsAndTime.timeBase);
     const seasonDay = Math.min(30, Math.floor(this.totalGameSeconds / 86_400) + 1);
 
@@ -1812,13 +2323,15 @@ export class WorldSimulation {
         const c = this.catalogs.buildingsById.get(b.catalogId);
         return c?.prefix === "CMP" || c?.prefix === "ASM";
       }).length;
-      const megaCount = [...this.buildings.values()].filter((b) => b.sectorId === "core").length;
 
       return {
         sectorId,
         gdpInWcu: rep?.gdpWcu ?? 250_000_000,
         swfAndReservesInWcu: toUnits(reg.fxReservesWcu + reg.swfBalanceWcu),
-        megaprojectEquityShare: megaCount > 0 ? 0.2 : 0,
+        megaprojectEquityShare:
+          megaprojects.length > 0
+            ? megaprojects.reduce((t, p) => t + (p.stakes.find((st) => st.sectorId === sectorId)?.share ?? 0), 0) / megaprojects.length
+            : 0,
         households,
         happinessIndex: reg.happinessIndex,
         // Sheet 25 Table 5 real-estate value per tile = 250 x GDD land value ($120..$6,000)
@@ -1844,7 +2357,7 @@ export class WorldSimulation {
       const lastAnnInflation =
         rep?.annualInflation ??
         (reg.inflationHistory[reg.inflationHistory.length - 1] ?? 0.0025) * 12;
-      const power = this.computeSectorPower(sectorId);
+      const power = this.effectivePower(sectorId);
       const sym = currencySymbol(reg.currency);
 
       const maxErr = rep
@@ -1896,6 +2409,9 @@ export class WorldSimulation {
         creditRating: rating,
         debtToRevenue: Number(reg.debtToRevenueRatio.toFixed(3)),
         imfActive: reg.imf.active,
+        imfApprovedWcuMinor: reg.imf.totalApprovedWcu.toString(),
+        imfDebtWcuMinor: reg.imf.debtPrincipalWcu.toString(),
+        imfTranchesDisbursed: reg.imf.tranchesDisbursed,
         households,
         citizens: Math.round(households * 2.2),
         happinessIndex: Number(reg.happinessIndex.toFixed(1)),
@@ -1933,6 +2449,12 @@ export class WorldSimulation {
         sectorId: sector.sectorId,
         advisors: this.advisorsFor(sector, traffic, construction, city),
       })),
+      borderPosts: [...this.borderPosts.values()],
+      borderStats: this.borderStats,
+      gas: this.gas?.sectors ?? [],
+      powerRing: this.powerRing(),
+      megaprojects,
+      exchange: this.listedCompanies(),
     };
   }
 

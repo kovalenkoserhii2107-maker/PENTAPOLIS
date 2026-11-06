@@ -3,6 +3,7 @@ import {
   ArrowUpCircle,
   Building2,
   Bus,
+  Globe2,
   Landmark,
   CheckCircle2,
   Circle,
@@ -39,6 +40,8 @@ interface BuildToolbarProps {
   onToggleTransport: () => void;
   cityOpen: boolean;
   onToggleCity: () => void;
+  geoOpen: boolean;
+  onToggleGeo: () => void;
 }
 
 const NETWORK_ITEMS: readonly { kind: NetworkKind; label: string; costHint: string }[] = [
@@ -88,6 +91,8 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
   onToggleTransport,
   cityOpen,
   onToggleCity,
+  geoOpen,
+  onToggleGeo,
 }) => {
   const [drawerMode, setDrawerMode] = useState<"none" | "network" | "zone" | "catalog">("none");
   const [catTab, setCatTab] = useState<CatalogTab>("EXT");
@@ -522,6 +527,16 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
             {snapshot.emergencies.some((e) => e.sectorId === activeSectorId && e.attended === false) && (
               <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
             )}
+          </button>
+
+          <button
+            onClick={onToggleGeo}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition ${
+              geoOpen ? "bg-violet-600 text-white" : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            <Globe2 className="w-3.5 h-3.5" />
+            <span>Мир</span>
           </button>
         </div>
       </div>
