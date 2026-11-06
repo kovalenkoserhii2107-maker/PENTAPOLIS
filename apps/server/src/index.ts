@@ -13,7 +13,8 @@
  * - `POST /api/command`  — Execute a `ClientCommand` over REST & broadcast updated snapshot
  * - `WS   /ws`           — Live multiplayer state & command sync
  */
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 import {
   CANONICAL_DECREES,
@@ -29,6 +30,8 @@ import { WorldSimulation } from "./worldServer.ts";
 export interface PentapolisServerOptions {
   readonly port?: number;
   readonly dbPath?: string;
+  readonly worldId?: string;
+  readonly staticDir?: string;
   readonly enableRealtimeLoop?: boolean;
 }
 
@@ -60,8 +63,15 @@ export function createPentapolisServer(
   options: PentapolisServerOptions = {}
 ): RunningPentapolisServer {
   const dbPath =
-    options.dbPath ?? resolve(import.meta.dir, "..", "data", "pentapolis.sqlite");
-  const world = new WorldSimulation(dbPath);
+    options.dbPath ??
+    process.env.PENTAPOLIS_DB_PATH ??
+    resolve(import.meta.dir, "..", "data", "pentapolis.sqlite");
+  if (dbPath !== ":memory:") {
+    mkdirSync(dirname(dbPath), { recursive: true });
+  }
+  const staticDir =
+    options.staticDir ?? resolve(import.meta.dir, "..", "..", "client", "dist");
+  const world = new WorldSimulation(dbPath, options.worldId);
   const clients = new Set<ServerWebSocket<{ connectedAt: number }>>();
 
   // Prepack binary 2,000,000-byte terrain + sector owner buffer once
@@ -204,6 +214,40 @@ export function createPentapolisServer(
               400
             )
           );
+      }
+
+      if (url.pathname.startsWith("/api/")) {
+        return jsonResponse({ ok: false, error: `Not found: ${url.pathname}` }, 404);
+      }
+
+      // Production Static SPA Serving from `apps/client/dist` with SPA fallback to `index.html`
+      if ((req.method === "GET" || req.method === "HEAD") && existsSync(staticDir)) {
+        const relPath = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
+        const candidate = resolve(staticDir, relPath);
+        if (candidate.startsWith(staticDir) && existsSync(candidate) && statSync(candidate).isFile()) {
+          const isHashedAsset = url.pathname.startsWith("/assets/");
+          const file = Bun.file(candidate);
+          return new Response(file, {
+            status: 200,
+            headers: {
+              "Content-Type": file.type || "application/octet-stream",
+              "Cache-Control": isHashedAsset
+                ? "public, max-age=31536000, immutable"
+                : "no-cache",
+            },
+          });
+        }
+        const indexHtml = resolve(staticDir, "index.html");
+        if (existsSync(indexHtml)) {
+          const file = Bun.file(indexHtml);
+          return new Response(file, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          });
+        }
       }
 
       return jsonResponse({ ok: false, error: `Not found: ${url.pathname}` }, 404);

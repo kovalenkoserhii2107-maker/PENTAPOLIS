@@ -39,8 +39,8 @@ export const CouncilChatDrawer: React.FC<CouncilChatDrawerProps> = ({
   };
 
   return (
-    <aside className="pointer-events-auto fixed right-3 top-14 bottom-16 z-30 w-80 flex flex-col rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-800 shadow-2xl text-xs overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800">
+    <aside className="compact-modal pointer-events-auto fixed right-3 top-14 bottom-16 z-30 w-80 max-w-[calc(100vw-1.5rem)] flex flex-col rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-800 shadow-2xl text-xs overflow-hidden">
+      <div className="compact-modal-header flex items-center justify-between px-3 py-2 bg-slate-900 border-b border-slate-800">
         <div className="flex items-center gap-1.5 font-bold text-white">
           <MessageSquare className="w-4 h-4 text-sky-400" />
           <span>Совет Полуострова</span>

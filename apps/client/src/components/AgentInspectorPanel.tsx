@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, Bus, Crosshair, Home, MapPin, Truck, User, X } from "lucide-react";
+import { ArrowLeft, Bus, Car, Crosshair, Home, MapPin, Siren, Truck, User, Wrench, X } from "lucide-react";
 import {
   formatMoney,
   type CitizenDossierDto,
@@ -19,6 +19,8 @@ const ROLE_LABELS: Readonly<Record<VehicleInspectorDto["role"], string>> = {
   freight: "Грузовой рейс",
   bus: "Городской автобус (лицензия)",
   metro: "Поезд метро",
+  service: "Городская служба",
+  emergency: "Экстренная служба ЧП (сирена)",
 };
 
 function money(symbol: string, minor: string): string {
@@ -125,7 +127,7 @@ export const AgentInspectorPanel: React.FC<AgentInspectorPanelProps> = ({
     const income = BigInt(citizen.totalIncomeMinor);
     const net = BigInt(citizen.netSavingsMinor);
     return (
-      <div className="rounded-xl bg-slate-950/95 backdrop-blur-md border border-emerald-600/50 shadow-2xl p-3 text-xs space-y-2.5">
+      <div className="compact-modal rounded-xl bg-slate-950/95 backdrop-blur-md border border-emerald-600/50 shadow-2xl p-3 text-xs space-y-2.5">
         {header(
           <>
             <User className="w-4 h-4 text-emerald-400" />
@@ -171,6 +173,62 @@ export const AgentInspectorPanel: React.FC<AgentInspectorPanelProps> = ({
           <div className="text-[10px] text-slate-400 px-1">
             Дорога на работу: {citizen.commuteKm} км · {citizen.commuteModeRu}
           </div>
+        </div>
+
+        {/* 5-Stage Personal Auto Lifecycle Card (GDD §6.4) */}
+        <div className="rounded-lg bg-slate-900/90 border border-slate-800 p-2 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold">
+            <span className="flex items-center gap-1 text-sky-300">
+              <Car className="w-3.5 h-3.5" />
+              <span>Личный автомобиль</span>
+            </span>
+            {citizen.car ? (
+              <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-200 text-[10px]">
+                Этап {citizen.car.stage}/5 · {citizen.car.stageNameRu}
+              </span>
+            ) : (
+              <span className="text-[10px] text-slate-500">Без авто (ОТ / пешком)</span>
+            )}
+          </div>
+          {citizen.car && (
+            <>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-medium text-white truncate">{citizen.car.modelName}</span>
+                <span className="text-slate-400 font-mono shrink-0">{citizen.car.ageYears} лет</span>
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex justify-between text-[10px] text-slate-400">
+                  <span>Износ кузова и агрегатов</span>
+                  <span className={citizen.car.wearPercent >= 70 ? "text-rose-400 font-mono" : "text-amber-300 font-mono"}>
+                    {citizen.car.wearPercent}%
+                  </span>
+                </div>
+                <div className="h-1.5 rounded bg-slate-800 overflow-hidden">
+                  <div
+                    className={citizen.car.wearPercent >= 70 ? "h-full bg-rose-500" : citizen.car.wearPercent >= 40 ? "h-full bg-amber-400" : "h-full bg-emerald-400"}
+                    style={{ width: `${Math.min(100, citizen.car.wearPercent)}%` }}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px]">
+                <span className="text-slate-400">Рыночная цена</span>
+                <span className="text-right font-mono text-emerald-300">
+                  {money(citizen.currencySymbol, citizen.car.marketValueMinor)}
+                </span>
+                <span className="text-slate-400">Топливо + СТО / мес</span>
+                <span className="text-right font-mono text-rose-300">
+                  −{money(
+                    citizen.currencySymbol,
+                    (BigInt(citizen.car.monthlyFuelMinor) + BigInt(citizen.car.monthlyStoMinor)).toString()
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-1 text-[10px] text-slate-400 pt-0.5 border-t border-slate-800/80">
+                <Wrench className="w-3 h-3 text-amber-400 shrink-0" />
+                <span>{citizen.car.purchaseHistoryRu}</span>
+              </div>
+            </>
+          )}
         </div>
 
         <div>
@@ -238,7 +296,14 @@ export const AgentInspectorPanel: React.FC<AgentInspectorPanelProps> = ({
   }
 
   // ---------------------------------------------------------------- Layer 1: vehicle card
-  const RoleIcon = vehicle.role === "freight" ? Truck : vehicle.role === "commuter" ? User : Bus;
+  const RoleIcon =
+    vehicle.role === "freight"
+      ? Truck
+      : vehicle.role === "commuter"
+        ? User
+        : vehicle.role === "emergency"
+          ? Siren
+          : Bus;
   const cargoPct = vehicle.cargo ? Math.round((vehicle.cargo.payload / Math.max(0.01, vehicle.cargo.capacity)) * 100) : 0;
   return (
     <div className="rounded-xl bg-slate-950/95 backdrop-blur-md border border-sky-600/50 shadow-2xl p-3 text-xs space-y-2.5">

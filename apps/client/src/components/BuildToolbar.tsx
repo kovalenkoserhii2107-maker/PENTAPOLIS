@@ -3,6 +3,8 @@ import {
   ArrowUpCircle,
   Building2,
   Bus,
+  Globe2,
+  Landmark,
   CheckCircle2,
   Circle,
   Factory,
@@ -22,6 +24,7 @@ import {
   type ZoneKind,
 } from "@pentapolis/shared-sim";
 import type { ActiveToolState } from "../renderer/PeninsulaScene.ts";
+import { ConstructionMarketCard } from "./ConstructionMarketCard.tsx";
 
 interface BuildToolbarProps {
   snapshot: WorldSnapshotDto;
@@ -35,6 +38,11 @@ interface BuildToolbarProps {
   onBulldozeBuilding: (buildingId: string) => void;
   transportOpen: boolean;
   onToggleTransport: () => void;
+  cityOpen: boolean;
+  onToggleCity: () => void;
+  geoOpen: boolean;
+  onToggleGeo: () => void;
+  questHighlight?: "network" | "zone" | "building" | "city" | null;
 }
 
 const NETWORK_ITEMS: readonly { kind: NetworkKind; label: string; costHint: string }[] = [
@@ -82,6 +90,11 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
   onBulldozeBuilding,
   transportOpen,
   onToggleTransport,
+  cityOpen,
+  onToggleCity,
+  geoOpen,
+  onToggleGeo,
+  questHighlight,
 }) => {
   const [drawerMode, setDrawerMode] = useState<"none" | "network" | "zone" | "catalog">("none");
   const [catTab, setCatTab] = useState<CatalogTab>("EXT");
@@ -185,6 +198,8 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
           </ul>
         </div>
 
+        <ConstructionMarketCard snapshot={snapshot} activeSectorId={activeSectorId} />
+
         {/* Selected Building Equity & Action Inspector */}
         {selectedBuilding && selectedCatalogEntry && (
           <div className="rounded-lg bg-slate-950/95 backdrop-blur-md border border-sky-500/50 p-3 text-xs shadow-2xl space-y-2">
@@ -220,6 +235,11 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
                   <span className="text-sky-300">
                     Стройка {Math.round(selectedBuilding.constructionProgress * 100)}%
                   </span>
+                ) : selectedBuilding.upgradeTargetLevel ? (
+                  <span className="text-sky-300">
+                    Работает на Ур.{selectedBuilding.level}, модернизация до Ур.{selectedBuilding.upgradeTargetLevel}:{" "}
+                    {Math.round((selectedBuilding.upgradeProgress ?? 0) * 100)}%
+                  </span>
                 ) : (
                   <span className="text-emerald-400">В строю (100%)</span>
                 )}
@@ -239,7 +259,9 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
               )}
 
               {selectedBuilding.level < selectedCatalogEntry.maxLevel &&
-                !selectedBuilding.stalledAwaitingPrivate && (
+                !selectedBuilding.stalledAwaitingPrivate &&
+                !selectedBuilding.upgradeTargetLevel &&
+                selectedBuilding.constructionProgress >= 1 && (
                   <button
                     onClick={() => onUpgradeBuilding(selectedBuilding.id)}
                     className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px]"
@@ -448,7 +470,7 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
               drawerMode === "network" || tool.mode === "network"
                 ? "bg-sky-600 text-white"
                 : "text-slate-300 hover:bg-slate-800"
-            }`}
+            } ${questHighlight === "network" && tool.mode !== "network" ? "ring-2 ring-amber-400 animate-pulse" : ""}`}
           >
             <Route className="w-3.5 h-3.5" />
             <span>Сети 90°/45°</span>
@@ -466,7 +488,7 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
               drawerMode === "zone" || tool.mode === "zone"
                 ? "bg-emerald-600 text-white"
                 : "text-slate-300 hover:bg-slate-800"
-            }`}
+            } ${questHighlight === "zone" && tool.mode !== "zone" ? "ring-2 ring-amber-400 animate-pulse" : ""}`}
           >
             <Building2 className="w-3.5 h-3.5" />
             <span>Зоны RCI</span>
@@ -478,10 +500,26 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
               drawerMode === "catalog" || tool.mode === "building"
                 ? "bg-amber-500 text-slate-950 font-bold"
                 : "text-slate-300 hover:bg-slate-800"
-            }`}
+            } ${questHighlight === "building" && tool.mode !== "building" ? "ring-2 ring-amber-400 animate-pulse" : ""}`}
           >
             <Hammer className="w-3.5 h-3.5" />
             <span>Каталог (127 объектов)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setDrawerMode("none");
+              onChangeTool(tool.mode === "demolish" ? { mode: "inspect" } : { mode: "demolish" });
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition ${
+              tool.mode === "demolish"
+                ? "bg-rose-600 text-white"
+                : "text-rose-300 hover:bg-rose-950/60"
+            }`}
+            title="Снос зданий и кварталов со 100% выкупом недвижимости (Eminent Domain)"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Снос</span>
           </button>
 
           <button
@@ -494,6 +532,29 @@ export const BuildToolbar: React.FC<BuildToolbarProps> = ({
           >
             <Bus className="w-3.5 h-3.5" />
             <span>Транспорт</span>
+          </button>
+
+          <button
+            onClick={onToggleCity}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition ${
+              cityOpen ? "bg-emerald-600 text-white" : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            <Landmark className="w-3.5 h-3.5" />
+            <span>Город</span>
+            {snapshot.emergencies.some((e) => e.sectorId === activeSectorId && e.attended === false) && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+            )}
+          </button>
+
+          <button
+            onClick={onToggleGeo}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition ${
+              geoOpen ? "bg-violet-600 text-white" : "text-slate-300 hover:bg-slate-800"
+            }`}
+          >
+            <Globe2 className="w-3.5 h-3.5" />
+            <span>Мир</span>
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPentapolisServer, type RunningPentapolisServer } from "../src/index.ts";
@@ -223,5 +223,127 @@ describe("Authoritative Pentapolis Server & SQLite WAL Persistence (Sprint 3)", 
     expect(reloaded.sectors[0]!.cityName).toBe("Североград");
     expect(reloaded.sectors[0]!.currency).toBe("UAH");
     expect(reloaded.buildings.length).toBe(2);
+  });
+
+  test("Sprint 8: 4-step starter quest grants book World -> T with 0n error, persist in SQLite, and server serves static PWA shell + SPA fallback", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pentapolis-s8-"));
+    tempDirs.push(dir);
+    const dbFile = join(dir, "s8.sqlite");
+    const distDir = join(dir, "dist");
+    mkdirSync(join(distDir, "assets"), { recursive: true });
+    writeFileSync(join(distDir, "index.html"), "<!doctype html><title>PENTAPOLIS PWA</title>");
+    writeFileSync(join(distDir, "sw.js"), "self.addEventListener('install', () => {});");
+
+    activeServer = createPentapolisServer({
+      port: 0,
+      dbPath: dbFile,
+      staticDir: distDir,
+      enableRealtimeLoop: false,
+    });
+
+    const w = activeServer.world;
+    expect(
+      w.executeCommand({
+        type: "claim_sector",
+        sectorId: 1,
+        cityName: "Новий Порт",
+        mayorName: "Олена",
+        currency: "UAH",
+      }).ok
+    ).toBe(true);
+
+    // Initially none of the 4 starter quests are completed -> premature claim rejected
+    const initialQuests = w.getSnapshot().sectors.find((s) => s.sectorId === 1)!.quests!;
+    expect(initialQuests.length).toBe(4);
+    expect(initialQuests.every((q) => !q.completed && !q.claimed)).toBe(true);
+    expect(w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 1 }).ok).toBe(false);
+
+    // Step 1: Connect starter road to S1 northern highway gateway (425, 48)
+    expect(
+      w.executeCommand({
+        type: "build_segment",
+        sectorId: 1,
+        kind: "street_2lane",
+        fromX: 425,
+        fromY: 48,
+        toX: 425,
+        toY: 210,
+      }).ok
+    ).toBe(true);
+    expect(
+      w.executeCommand({
+        type: "build_segment",
+        sectorId: 1,
+        kind: "street_2lane",
+        fromX: 350,
+        fromY: 210,
+        toX: 425,
+        toY: 210,
+      }).ok
+    ).toBe(true);
+    expect(w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 1 }).ok).toBe(true);
+
+    // Step 2: Paint RES-01 residential zone next to the road
+    expect(
+      w.executeCommand({
+        type: "paint_zone",
+        sectorId: 1,
+        zoneKind: "RES-01",
+        x: 355,
+        y: 212,
+        width: 14,
+        depth: 14,
+      }).ok
+    ).toBe(true);
+    expect(w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 2 }).ok).toBe(true);
+
+    // Step 3: Build UTL-01 (Water Intake) and ENG-01 (Starter Power Station)
+    const gw = w.map.gateways.find((g) => g.sectorId === 1)!;
+    // Place UTL-01 and ENG-01 on dry land in Sector 1
+    expect(
+      w.executeCommand({
+        type: "place_building",
+        sectorId: 1,
+        catalogId: "UTL-01",
+        tileX: gw.tileX - 30,
+        tileY: 220,
+      }).ok
+    ).toBe(true);
+    expect(
+      w.executeCommand({
+        type: "place_building",
+        sectorId: 1,
+        catalogId: "ENG-01",
+        tileX: gw.tileX - 60,
+        tileY: 220,
+      }).ok
+    ).toBe(true);
+    expect(w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 3 }).ok).toBe(true);
+
+    // Step 4: Advance days so developers build residential lots and >= 100 citizens settle
+    for (let d = 0; d < 8; d++) w.executeCommand({ type: "admin_time_skip", jump: "1d" });
+    const claim4 = w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 4 });
+    expect(claim4.ok, claim4.message).toBe(true);
+    // Duplicate claim rejected
+    expect(w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 4 }).ok).toBe(false);
+
+    // Advance 1 month -> verify double-entry ledger closes with exact 0n discrepancy!
+    w.executeCommand({ type: "admin_time_skip", jump: "1mo" });
+    const snap = w.getSnapshot();
+    expect(snap.invariantAllZero).toBe(true);
+    expect(snap.sectors.find((s) => s.sectorId === 1)!.quests!.every((q) => q.claimed)).toBe(true);
+
+    // Verify HTTP static SPA serving, Service Worker serving, SPA fallback, and API 404
+    const rootHtml = await (await fetch(`${activeServer.url}/`)).text();
+    expect(rootHtml).toContain("PENTAPOLIS PWA");
+
+    const swJs = await (await fetch(`${activeServer.url}/sw.js`)).text();
+    expect(swJs).toContain("install");
+
+    const spaFallback = await (await fetch(`${activeServer.url}/sector/1`)).text();
+    expect(spaFallback).toContain("PENTAPOLIS PWA");
+
+    const api404 = await fetch(`${activeServer.url}/api/does-not-exist`);
+    expect(api404.status).toBe(404);
   });
 });

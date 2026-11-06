@@ -60,8 +60,8 @@ export const TransportPanel: React.FC<TransportPanelProps> = ({
   const drawing = tool.mode === "bus_route";
 
   return (
-    <div className="rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700 shadow-2xl p-3 text-xs space-y-3">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+    <div className="compact-modal rounded-xl bg-slate-950/95 backdrop-blur-md border border-slate-700 shadow-2xl p-3 text-xs space-y-3">
+      <div className="compact-modal-header flex items-center justify-between bg-slate-950/95 border-b border-slate-800 pb-2">
         <div className="flex items-center gap-1.5 font-bold text-amber-300">
           <Bus className="w-4 h-4" />
           <span>Транспорт S{activeSectorId}</span>

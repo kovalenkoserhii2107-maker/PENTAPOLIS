@@ -9,11 +9,15 @@
  * is an exact `bigint`; totals are sums of the lines.
  */
 import type { HouseholdClassState } from "../economy/RegionalMoneyEngine.ts";
+import { CAR_STAGE_NAMES_RU, IMPORTED_CAR_PREMIUM, getCarStages } from "../city/autoLifecycle.ts";
 import { money, mulRate, type Money } from "../money/money.ts";
 import type {
+  CitizenCarDto,
   CitizenDossierDto,
+  DistrictDto,
   CitizenThoughtDto,
   DossierLineDto,
+  SectorAutoStatsDto,
   VehicleInspectorDto,
 } from "../protocol.ts";
 import type { MasterCatalogs } from "../catalogs/index.ts";
@@ -31,6 +35,10 @@ export interface DossierRegionInput {
   readonly activeDecreeIds: readonly string[];
   readonly powerDeficit: boolean;
   readonly currencySymbol: string;
+  /** The citizen's home district (Sprint 6): crime, ecology, services, prestige. */
+  readonly homeDistrict?: DistrictDto;
+  /** Live sector auto market snapshot for dealership / used lot / STO context. */
+  readonly autoStats?: SectorAutoStatsDto;
 }
 
 const CLASS_NAMES_RU: Readonly<Record<CitizenContext["classId"], string>> = {
@@ -139,6 +147,15 @@ export function buildCitizenDossier(ctx: CitizenContext, region: DossierRegionIn
   if (region.activeDecreeIds.includes("FREE_TRANSIT") && (ctx.busCovered || ctx.metroCovered)) {
     thoughts.push({ text: "Бесплатный проезд экономит деньги", delta: 6 });
   }
+  const district = region.homeDistrict;
+  if (district) {
+    if (district.crimeRate > 0.15) thoughts.push({ text: "Страшно выходить вечером — полиции не видно", delta: -8 });
+    if (district.ecology < 0.4) thoughts.push({ text: "Дышать нечем из-за заводского дыма", delta: -10 });
+    if (district.coverage.health < 0.3) thoughts.push({ text: "Далеко до поликлиники", delta: -6 });
+    if (kids > 0 && district.coverage.kindergarten < 0.3) thoughts.push({ text: "Нет мест в детсаду — жена сидит дома", delta: -7 });
+    if (district.coverage.park > 0.5) thoughts.push({ text: "Парк рядом с домом", delta: 5 });
+    if (district.tier >= 4) thoughts.push({ text: `Живу в престижном районе (${district.tierNameRu})`, delta: 6 });
+  }
   if (net < 0n) thoughts.push({ text: "Не хватает до зарплаты, проедаю сбережения", delta: -15 });
   else if (savingsRate > 0.1) thoughts.push({ text: "Удаётся откладывать каждый месяц", delta: 6 });
   thoughts.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
@@ -146,6 +163,70 @@ export function buildCitizenDossier(ctx: CitizenContext, region: DossierRegionIn
 
   const mood = topThoughts.reduce((s, t) => s + t.delta, 0) * 0.5 + (rnd() - 0.5) * 8;
   const satisfaction = Math.max(0, Math.min(100, Math.round(region.happinessIndex + mood)));
+
+  // 5-Stage Personal Car Dossier (Sheet 25 Table 3)
+  let car: CitizenCarDto | null = null;
+  const ownsPersonalCar =
+    ctx.commuteMode === "car" ||
+    ctx.classId === "elite" ||
+    ctx.classId === "engineers" ||
+    (ctx.classId === "workers" && rnd() < 0.65);
+  if (ownsPersonalCar) {
+    const carStages = getCarStages();
+    const stage: 1 | 2 | 3 | 4 | 5 =
+      ctx.classId === "elite"
+        ? 1
+        : ctx.classId === "engineers"
+          ? rnd() < 0.45
+            ? 1
+            : 2
+          : rnd() < 0.6
+            ? 3
+            : 4;
+    const spec = carStages[stage - 1]!;
+    const [ageMin, ageMax] = spec.ageYears;
+    const carAge = ageMin + Math.floor(rnd() * Math.max(1, ageMax - ageMin + 1));
+    const potholeWear = ctx.commuteMinHealth < 40 ? 28 : ctx.commuteMinHealth < 75 ? 14 : 0;
+    const wearPercent = Math.min(96, Math.max(4, Math.round((carAge / 20) * 72 + potholeWear)));
+    const hasDealer = region.autoStats?.dealership ?? false;
+    const hasUsed = region.autoStats?.usedLot ?? false;
+    const hasSto = (region.autoStats?.repairShops ?? 0) > 0;
+    const priceMult = stage === 1 && !hasDealer ? 1 + IMPORTED_CAR_PREMIUM : 1;
+    const marketVal = money(spec.marketPriceUnits * priceMult * region.fxRatePerWcu * region.cpi);
+    const stoPenalty = ctx.commuteMinHealth < 40 ? 1.65 : ctx.commuteMinHealth < 75 ? 1.3 : 1.0;
+    const monthlySto = money(spec.maintenancePerMonthUnits * stoPenalty * region.fxRatePerWcu * region.cpi);
+    const monthlyFuel = money(Math.max(45, cls.transportUnits * 0.55) * roadPenalty * p);
+    const modelsByStage: Readonly<Record<1 | 2 | 3 | 4 | 5, string>> = {
+      1: ctx.classId === "elite" ? "Пента Люкс V6 (CAR-03)" : "Аврора Седан GT (CAR-02)",
+      2: "Аврора Комфорт Trade-In (CAR-02)",
+      3: "Таврия-Нова Хэтчбек (CAR-01)",
+      4: "Рабочий Универсал 1.6 (CAR-04)",
+      5: "Старый седан под утиль",
+    };
+    const historyRu =
+      stage === 1
+        ? hasDealer
+          ? "Куплен новым в местном Автосалоне (BIZ-07) в автокредит банка; прошлый 4-летний седан сдан по Trade-In"
+          : "Пригнан по импорту с наценкой +30% (в секторе ещё нет Автосалона BIZ-07)"
+        : stage === 2
+          ? hasUsed
+            ? "Выкуплен с программы Trade-In на площадке проверенных авто (BIZ-08)"
+            : "Куплен у первого владельца (инженера) после 4 лет эксплуатации"
+          : stage === 3
+            ? `${hasUsed ? "Куплен на Авторынке б/у (BIZ-08)" : "Куплен с рук"}; ${hasSto ? "регулярное ТО подвески на СТО (BIZ-01)" : "в секторе не хватает СТО (BIZ-01)!"}`
+            : `${carAge} лет пробега: частый ремонт ходовой на СТО, через ${Math.max(1, 20 - carAge)} г. пойдёт на Автосвалку (UTL-05 → 1.2 т лома стали)`;
+    car = {
+      modelName: modelsByStage[stage],
+      stage,
+      stageNameRu: CAR_STAGE_NAMES_RU[stage],
+      ageYears: carAge,
+      wearPercent,
+      marketValueMinor: marketVal.toString(),
+      monthlyFuelMinor: monthlyFuel.toString(),
+      monthlyStoMinor: monthlySto.toString(),
+      purchaseHistoryRu: historyRu,
+    };
+  }
 
   return {
     id: ctx.citizenId,
@@ -183,6 +264,7 @@ export function buildCitizenDossier(ctx: CitizenContext, region: DossierRegionIn
     satisfaction,
     thoughts: topThoughts,
     vehicleId: ctx.vehicleId,
+    car,
   };
 }
 
@@ -199,7 +281,11 @@ export function buildVehicleInspector(
   let cargo: VehicleInspectorDto["cargo"] = null;
   if (rec.cargo) {
     const valueLocal = mulRate(rec.cargo.valueWcu, region.fxRatePerWcu);
-    const duty = rec.cargo.exportViaGateway ? mulRate(valueLocal, region.exportDutyRate) : 0n;
+    const duty = rec.cargo.border
+      ? mulRate(valueLocal, rec.cargo.border.importDuty)
+      : rec.cargo.exportViaGateway
+        ? mulRate(valueLocal, region.exportDutyRate)
+        : 0n;
     cargo = {
       commodity: rec.cargo.commodity,
       payload: rec.cargo.payload,
@@ -207,9 +293,11 @@ export function buildVehicleInspector(
       unit: rec.cargo.unit,
       valueMinor: valueLocal.toString(),
       dutyPaidMinor: duty.toString(),
-      dutyLabel: rec.cargo.exportViaGateway
-        ? `Вывозная пошлина ${(region.exportDutyRate * 100).toFixed(1)}% на внешнем шлюзе`
-        : "Внутренняя поставка — без пошлины",
+      dutyLabel: rec.cargo.border
+        ? `Ввозная пошлина ${(rec.cargo.border.importDuty * 100).toFixed(1)}% на КПП #${rec.cargo.border.postId} (Сектор ${rec.cargo.border.toSector})`
+        : rec.cargo.exportViaGateway
+          ? `Вывозная пошлина ${(region.exportDutyRate * 100).toFixed(1)}% на внешнем шлюзе`
+          : "Внутренняя поставка — без пошлины",
     };
   }
 

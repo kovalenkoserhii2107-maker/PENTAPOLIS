@@ -32,8 +32,32 @@ import {
   type ZoneKind,
 } from "@pentapolis/shared-sim";
 import { RoadMeshBuilder } from "./RoadMeshBuilder.ts";
-import { LotGenerator } from "./LotGenerator.ts";
+import { LotGenerator, type HeatmapOverlayKind } from "./LotGenerator.ts";
 import { TrafficRenderer } from "./TrafficRenderer.ts";
+
+const MAX_FOLIAGE_TREES = 20_000;
+const FOLIAGE_GREEN_HEX = [0x15803d, 0x16a34a, 0x22c55e, 0x4d7c0f] as const;
+const FOLIAGE_AUTUMN_HEX = [0xdc2626, 0xea580c, 0xd97706] as const;
+
+function tileHash(x: number, y: number, salt = 0): number {
+  let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(salt, 1442695041)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+function forestClusterNoise(x: number, y: number): number {
+  const gx = Math.floor(x / 18);
+  const gy = Math.floor(y / 18);
+  const fx = (x % 18) / 18;
+  const fy = (y % 18) / 18;
+  const u = fx * fx * (3 - 2 * fx);
+  const v = fy * fy * (3 - 2 * fy);
+  const n00 = (tileHash(gx, gy, 11) & 1023) / 1023;
+  const n10 = (tileHash(gx + 1, gy, 11) & 1023) / 1023;
+  const n01 = (tileHash(gx, gy + 1, 11) & 1023) / 1023;
+  const n11 = (tileHash(gx + 1, gy + 1, 11) & 1023) / 1023;
+  return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
+}
 
 export type ActiveToolState =
   | { mode: "inspect" }
@@ -41,7 +65,8 @@ export type ActiveToolState =
   | { mode: "zone"; zoneKind: ZoneKind; brushSize: number }
   | { mode: "building"; catalogId: string; width: number; depth: number; orientationDeg: 0 | 45 | 90 | 135 }
   | { mode: "bus_route"; stopIds: readonly string[] }
-  | { mode: "repair" };
+  | { mode: "repair" }
+  | { mode: "demolish" };
 
 export interface HoveredTileInfo {
   readonly tileX: number;
@@ -59,6 +84,8 @@ export interface PeninsulaSceneCallbacks {
   onSelectVehicle?: (vehicleId: string | null) => void;
   onToggleBusStop?: (buildingId: string) => void;
   onRepairSegment?: (segmentId: string) => void;
+  onDemolishBuilding?: (buildingId: string) => void;
+  onDemolishZone?: (zoneId: string) => void;
 }
 
 const ROUTE_COLORS = [0xdc2626, 0x2563eb, 0x16a34a, 0x9333ea, 0xea580c];
@@ -92,13 +119,20 @@ export class PeninsulaScene {
 
   private readonly roadBuilder = new RoadMeshBuilder();
   private readonly lotGenerator = new LotGenerator();
+  private readonly foliageGroup = new THREE.Group();
+  private foliageTrunks: THREE.InstancedMesh | null = null;
+  private foliageCrowns: THREE.InstancedMesh | null = null;
+  private lastFoliageSignature = "";
+  private depositsCache: readonly ResourceDepositSite[] = [];
   private readonly markersGroup = new THREE.Group();
   private readonly emergenciesGroup = new THREE.Group();
+  private readonly overlayRingsGroup = new THREE.Group();
   private readonly previewGroup = new THREE.Group();
   private readonly trafficRenderer = new TrafficRenderer();
   private readonly busRoutesGroup = new THREE.Group();
   private undergroundView = false;
   private followVehicleId: string | null = null;
+  private heatmapOverlay: HeatmapOverlayKind = "none";
 
   private surfaceBytes: Uint8Array | null = null;
   private ownerBytes: Uint8Array | null = null;
@@ -175,8 +209,10 @@ export class PeninsulaScene {
     this.scene.add(sun.target);
 
     this.scene.add(this.markersGroup);
+    this.scene.add(this.foliageGroup);
     this.scene.add(this.roadBuilder.group);
     this.scene.add(this.lotGenerator.group);
+    this.scene.add(this.overlayRingsGroup);
     this.scene.add(this.emergenciesGroup);
     this.scene.add(this.trafficRenderer.group);
     this.scene.add(this.busRoutesGroup);
@@ -200,7 +236,10 @@ export class PeninsulaScene {
         this.lastSnapshot.buildings,
         this.lastSnapshot.zones,
         this.catalogs,
-        this.selectedBuildingId
+        this.selectedBuildingId,
+        new Map(this.lastSnapshot.zoneSites.map((z) => [z.zoneId, z])),
+        new Map(this.lastSnapshot.districts.map((d) => [d.zoneId, d])),
+        this.heatmapOverlay
       );
     }
   }
@@ -217,6 +256,82 @@ export class PeninsulaScene {
     this.target.set(tileX, 0, tileY);
     this.zoomLevel = zoom;
     this.updateCameraTransform();
+  }
+
+  /** Land value overlay: zones tinted by district tier (sheet 25 Table 5). */
+  public setLandValueOverlay(on: boolean): void {
+    this.setHeatmapOverlay(on ? "land_value" : "none");
+  }
+
+  /** Switches heatmap overlay (`none` | `land_value` | `pollution` | `coverage`). */
+  public setHeatmapOverlay(overlay: HeatmapOverlayKind): void {
+    this.heatmapOverlay = overlay;
+    this.setSelectedBuilding(this.selectedBuildingId);
+    this.rebuildOverlayRings();
+  }
+
+  private rebuildOverlayRings(): void {
+    while (this.overlayRingsGroup.children.length > 0) {
+      const child = this.overlayRingsGroup.children.pop()! as THREE.Mesh;
+      child.geometry.dispose();
+      (child.material as THREE.Material).dispose();
+    }
+    const snap = this.lastSnapshot;
+    if (!snap || (this.heatmapOverlay !== "pollution" && this.heatmapOverlay !== "coverage")) return;
+
+    for (const b of snap.buildings) {
+      if (b.stalledAwaitingPrivate || b.constructionProgress < 0.5) continue;
+      const cat = this.catalogs.buildingsById.get(b.catalogId);
+      if (!cat) continue;
+      const cx = b.tileX + b.width * 0.5;
+      const cz = b.tileY + b.depth * 0.5;
+
+      if (this.heatmapOverlay === "pollution") {
+        const heavy =
+          cat.pollution >= 2 ||
+          cat.prefix === "EXT" ||
+          cat.id === "ENG-01" ||
+          cat.id === "UTL-04" ||
+          cat.id === "UTL-05";
+        const medium = cat.pollution >= 1 || cat.prefix === "PRO";
+        if (!heavy && !medium) continue;
+        const radius = heavy ? 18 : 11;
+        const disc = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 28),
+          new THREE.MeshBasicMaterial({
+            color: heavy ? 0xdc2626 : 0xa855f7,
+            transparent: true,
+            opacity: heavy ? 0.24 : 0.16,
+            depthWrite: false,
+          })
+        );
+        disc.rotation.x = -Math.PI / 2;
+        disc.position.set(cx, 0.14, cz);
+        this.overlayRingsGroup.add(disc);
+      } else if (this.heatmapOverlay === "coverage") {
+        const isService =
+          cat.prefix === "SAF" ||
+          cat.prefix === "HLT" ||
+          cat.prefix === "EDU" ||
+          cat.id === "CIV-03" ||
+          cat.id === "TRN-01" ||
+          cat.id === "TRN-09";
+        if (!isService) continue;
+        const radius = cat.id === "TRN-09" ? 15 : cat.prefix === "SAF" || cat.prefix === "HLT" ? 26 : 20;
+        const disc = new THREE.Mesh(
+          new THREE.CircleGeometry(radius, 28),
+          new THREE.MeshBasicMaterial({
+            color: cat.id === "TRN-09" ? 0x38bdf8 : 0x10b981,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false,
+          })
+        );
+        disc.rotation.x = -Math.PI / 2;
+        disc.position.set(cx, 0.14, cz);
+        this.overlayRingsGroup.add(disc);
+      }
+    }
   }
 
   public setTrafficState(traffic: TrafficStateDto): void {
@@ -241,6 +356,7 @@ export class PeninsulaScene {
     this.roadBuilder.setUndergroundView(on);
     this.trafficRenderer.setUndergroundView(on);
     this.lotGenerator.group.visible = !on;
+    this.foliageGroup.visible = !on;
     this.busRoutesGroup.visible = !on;
     if (this.terrainMesh) {
       const mat = this.terrainMesh.material as THREE.MeshLambertMaterial;
@@ -398,7 +514,10 @@ export class PeninsulaScene {
     this.terrainMesh.receiveShadow = true;
     this.scene.add(this.terrainMesh);
 
+    this.depositsCache = deposits;
     this.buildStaticMarkers(gateways, deposits);
+    this.lastFoliageSignature = "";
+    this.rebuildFoliage();
   }
 
   private buildStaticMarkers(
@@ -481,9 +600,217 @@ export class PeninsulaScene {
       snapshot.buildings,
       snapshot.zones,
       this.catalogs,
-      this.selectedBuildingId
+      this.selectedBuildingId,
+      new Map(snapshot.zoneSites.map((z) => [z.zoneId, z])),
+      new Map(snapshot.districts.map((d) => [d.zoneId, d])),
+      this.heatmapOverlay
     );
     this.rebuildEmergencies(snapshot.emergencies);
+    this.rebuildOverlayRings();
+
+    const sig = `${snapshot.segments.length}|${snapshot.zones.length}|${snapshot.buildings.length}|${
+      snapshot.segments[snapshot.segments.length - 1]?.id ?? ""
+    }|${snapshot.zones[snapshot.zones.length - 1]?.id ?? ""}|${
+      snapshot.buildings[snapshot.buildings.length - 1]?.id ?? ""
+    }`;
+    if (sig !== this.lastFoliageSignature) {
+      this.lastFoliageSignature = sig;
+      this.rebuildFoliage();
+    }
+  }
+
+  /**
+   * Procedural Instanced Foliage (`rebuildFoliage()`):
+   * 2 `THREE.InstancedMesh`es (trunks + crowns = 2 draw calls across the entire 1000×1000 map,
+   * up to 20,000 trees) placed via deterministic coordinate noise on unoccupied `SurfaceType.Land`,
+   * riverbanks, parks (`CIV-03`, `CIV-06`, `CIV-07`, `LEI-*`), and residential yards (`RES-01`, `RES-02`),
+   * with 78% lush greens and 22% autumn crimson/orange accents.
+   */
+  public rebuildFoliage(): void {
+    const surface = this.surfaceBytes;
+    const owner = this.ownerBytes;
+    if (!surface || !owner) return;
+
+    if (!this.foliageTrunks || !this.foliageCrowns) {
+      const trunkGeo = new THREE.CylinderGeometry(0.09, 0.15, 0.72, 5);
+      trunkGeo.translate(0, 0.36, 0);
+      this.foliageTrunks = new THREE.InstancedMesh(
+        trunkGeo,
+        new THREE.MeshLambertMaterial({ color: 0x5c4033 }),
+        MAX_FOLIAGE_TREES
+      );
+      this.foliageTrunks.castShadow = false;
+      this.foliageTrunks.receiveShadow = true;
+      this.foliageTrunks.frustumCulled = false;
+
+      const crownGeo = new THREE.DodecahedronGeometry(0.68, 0);
+      crownGeo.scale(1, 1.18, 1);
+      crownGeo.translate(0, 1.15, 0);
+      this.foliageCrowns = new THREE.InstancedMesh(
+        crownGeo,
+        new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }),
+        MAX_FOLIAGE_TREES
+      );
+      this.foliageCrowns.castShadow = true;
+      this.foliageCrowns.receiveShadow = true;
+      this.foliageCrowns.frustumCulled = false;
+
+      this.foliageGroup.add(this.foliageTrunks);
+      this.foliageGroup.add(this.foliageCrowns);
+    }
+
+    // 0 = free land, 1 = blocked (road/building/deposit/non-yard zone), 2 = park, 3 = RES-01/02 yard
+    const mask = new Uint8Array(GRID_WIDTH * GRID_HEIGHT);
+    const markRect = (x0: number, y0: number, w: number, d: number, code: number) => {
+      const minX = Math.max(0, Math.floor(x0));
+      const maxX = Math.min(GRID_WIDTH - 1, Math.ceil(x0 + w));
+      const minY = Math.max(0, Math.floor(y0));
+      const maxY = Math.min(GRID_HEIGHT - 1, Math.ceil(y0 + d));
+      for (let y = minY; y <= maxY; y++) {
+        const row = y * GRID_WIDTH;
+        for (let x = minX; x <= maxX; x++) {
+          mask[row + x] = code;
+        }
+      }
+    };
+
+    for (const dep of this.depositsCache) {
+      const r = Math.min(6, Math.ceil(dep.radiusTiles * 0.45));
+      markRect(dep.tileX - r, dep.tileY - r, r * 2, r * 2, 1);
+    }
+
+    const snap = this.lastSnapshot;
+    if (snap) {
+      for (const z of snap.zones) {
+        if (z.zoneKind === "RES-01" || z.zoneKind === "RES-02") {
+          markRect(z.x, z.y, z.width, z.depth, 3);
+        } else {
+          markRect(z.x - 1, z.y - 1, z.width + 2, z.depth + 2, 1);
+        }
+      }
+
+      for (const b of snap.buildings) {
+        const isPark =
+          b.catalogId === "CIV-03" ||
+          b.catalogId === "CIV-06" ||
+          b.catalogId === "CIV-07" ||
+          b.catalogId === "LEI-10" ||
+          b.catalogId === "LEI-11" ||
+          b.catalogId === "LEI-14";
+        if (isPark) {
+          markRect(b.tileX, b.tileY, b.width, b.depth, 2);
+        } else {
+          markRect(b.tileX - 1, b.tileY - 1, b.width + 2, b.depth + 2, 1);
+        }
+      }
+
+      for (const seg of snap.segments) {
+        if (seg.kind === "metro_tunnel") continue;
+        const dx = seg.toX - seg.fromX;
+        const dy = seg.toY - seg.fromY;
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy)));
+        const pad = seg.kind === "express_6lane" || seg.kind === "heavy_bypass" ? 3 : 2;
+        for (let i = 0; i <= steps; i++) {
+          const sx = Math.round(seg.fromX + (dx * i) / steps);
+          const sy = Math.round(seg.fromY + (dy * i) / steps);
+          markRect(sx - pad, sy - pad, pad * 2, pad * 2, 1);
+        }
+      }
+    }
+
+    const dummy = new THREE.Object3D();
+    const col = new THREE.Color();
+    let count = 0;
+
+    const placeTree = (wx: number, wz: number, scale: number, hVal: number) => {
+      if (count >= MAX_FOLIAGE_TREES) return;
+      dummy.position.set(wx, 0, wz);
+      dummy.rotation.set(0, ((hVal & 255) / 255) * Math.PI * 2, 0);
+      dummy.scale.set(scale, scale * (0.9 + ((hVal >>> 8) & 31) / 100), scale);
+      dummy.updateMatrix();
+      this.foliageTrunks!.setMatrixAt(count, dummy.matrix);
+      this.foliageCrowns!.setMatrixAt(count, dummy.matrix);
+
+      // 78% lush greens (#15803d, #16a34a, #22c55e, #4d7c0f) + 22% autumn accents (#dc2626, #ea580c, #d97706)
+      const roll = (hVal >>> 16) % 100;
+      const hex =
+        roll < 78
+          ? FOLIAGE_GREEN_HEX[hVal % FOLIAGE_GREEN_HEX.length]!
+          : FOLIAGE_AUTUMN_HEX[hVal % FOLIAGE_AUTUMN_HEX.length]!;
+      this.foliageCrowns!.setColorAt(count, col.setHex(hex));
+      count++;
+    };
+
+    // Pass 1: Planted urban trees inside parks (`mask === 2`) and residential yards (`mask === 3`)
+    if (snap) {
+      for (const b of snap.buildings) {
+        const idx0 = b.tileY * GRID_WIDTH + b.tileX;
+        if (mask[idx0] !== 2) continue;
+        for (let y = b.tileY + 1; y < b.tileY + b.depth - 1 && count < MAX_FOLIAGE_TREES; y += 2) {
+          for (let x = b.tileX + 1; x < b.tileX + b.width - 1 && count < MAX_FOLIAGE_TREES; x += 2) {
+            const h = tileHash(x, y, 71);
+            if ((h % 10) < 6) {
+              placeTree(x + 0.5, y + 0.5, 0.85 + (h % 25) * 0.01, h);
+            }
+          }
+        }
+      }
+
+      for (const z of snap.zones) {
+        if (z.zoneKind !== "RES-01" && z.zoneKind !== "RES-02") continue;
+        const step = z.zoneKind === "RES-01" ? 3 : 4;
+        for (let y = z.y; y <= z.y + z.depth && count < MAX_FOLIAGE_TREES; y += step) {
+          for (let x = z.x; x <= z.x + z.width && count < MAX_FOLIAGE_TREES; x += step) {
+            if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) continue;
+            if (mask[y * GRID_WIDTH + x] === 1) continue;
+            const h = tileHash(x, y, 89);
+            if ((h % 10) < 7) {
+              placeTree(x + 0.15, y + 0.15, 0.72 + (h % 20) * 0.01, h);
+            }
+          }
+        }
+      }
+    }
+
+    // Pass 2: Natural forests & riverbank groves across unoccupied `SurfaceType.Land`
+    for (let y = 4; y < GRID_HEIGHT - 4 && count < MAX_FOLIAGE_TREES; y += 3) {
+      const rowOff = y * GRID_WIDTH;
+      for (let x = 4; x < GRID_WIDTH - 4 && count < MAX_FOLIAGE_TREES; x += 3) {
+        const idx = rowOff + x;
+        if (surface[idx] !== SurfaceType.Land || mask[idx] !== 0) continue;
+        const ow = owner[idx]!;
+        if (ow === OwnerCode.CentralCore) {
+          const distCore = Math.hypot(x - CORE_CENTER_X, y - CORE_CENTER_Y);
+          if (distCore > 55 && distCore < 63) continue;
+        }
+
+        const nearRiver =
+          surface[idx - 2] === SurfaceType.River ||
+          surface[idx + 2] === SurfaceType.River ||
+          surface[idx - 2 * GRID_WIDTH] === SurfaceType.River ||
+          surface[idx + 2 * GRID_WIDTH] === SurfaceType.River;
+
+        const h = tileHash(x, y, 37);
+        const cluster = forestClusterNoise(x, y);
+        const sectorDensityBonus = ow === OwnerCode.Sector3 ? 0.12 : ow === OwnerCode.Sector4 ? 0.06 : 0;
+        const spawnChance = nearRiver ? 0.58 : cluster > 0.53 - sectorDensityBonus ? (cluster - 0.35) * 0.52 : 0.025;
+
+        if ((h & 1023) / 1023 < spawnChance) {
+          const jx = ((h >>> 10) & 31) / 31 - 0.5;
+          const jz = ((h >>> 15) & 31) / 31 - 0.5;
+          const scale = 0.8 + ((h >>> 20) & 31) / 64;
+          placeTree(x + 0.5 + jx * 1.6, y + 0.5 + jz * 1.6, scale, h);
+        }
+      }
+    }
+
+    this.foliageTrunks.count = count;
+    this.foliageCrowns.count = count;
+    this.foliageTrunks.instanceMatrix.needsUpdate = true;
+    this.foliageCrowns.instanceMatrix.needsUpdate = true;
+    if (this.foliageCrowns.instanceColor) {
+      this.foliageCrowns.instanceColor.needsUpdate = true;
+    }
   }
 
   private rebuildEmergencies(emergencies: readonly ActiveEmergencyDto[]): void {
@@ -491,7 +818,8 @@ export class PeninsulaScene {
       this.emergenciesGroup.remove(this.emergenciesGroup.children[0]!);
     }
     for (const emg of emergencies) {
-      const col = emg.emergencyId === "FROZEN_CONSTRUCTION" ? 0xf59e0b : 0xef4444;
+      // Amber: frozen construction; orange: crews on the way; red: nobody is coming
+      const col = emg.emergencyId === "FROZEN_CONSTRUCTION" ? 0xf59e0b : emg.attended ? 0xf97316 : 0xef4444;
       const geo = new THREE.CylinderGeometry(0.6, 2.2, 18, 12, 1, true);
       const mat = new THREE.MeshBasicMaterial({
         color: col,
@@ -591,6 +919,51 @@ export class PeninsulaScene {
       return;
     }
 
+    if (this.tool.mode === "demolish") {
+      const snap = this.lastSnapshot;
+      if (snap) {
+        const b = snap.buildings.find(
+          (x) =>
+            hover.tileX >= x.tileX &&
+            hover.tileX < x.tileX + x.width &&
+            hover.tileY >= x.tileY &&
+            hover.tileY < x.tileY + x.depth
+        );
+        if (b) {
+          const ghost = new THREE.Mesh(
+            new THREE.BoxGeometry(b.width + 0.3, 3.6, b.depth + 0.3),
+            new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.55 })
+          );
+          ghost.position.set(b.tileX + b.width * 0.5, 1.85, b.tileY + b.depth * 0.5);
+          this.previewGroup.add(ghost);
+          return;
+        }
+        const z = snap.zones.find(
+          (x) =>
+            hover.tileX >= x.x &&
+            hover.tileX < x.x + x.width &&
+            hover.tileY >= x.y &&
+            hover.tileY < x.y + x.depth
+        );
+        if (z) {
+          const ghost = new THREE.Mesh(
+            new THREE.BoxGeometry(z.width + 0.2, 0.7, z.depth + 0.2),
+            new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.5 })
+          );
+          ghost.position.set(z.x + z.width * 0.5, 0.38, z.y + z.depth * 0.5);
+          this.previewGroup.add(ghost);
+          return;
+        }
+      }
+      const cursor = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 0.35, 2),
+        new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.6 })
+      );
+      cursor.position.set(hover.tileX + 0.5, 0.22, hover.tileY + 0.5);
+      this.previewGroup.add(cursor);
+      return;
+    }
+
     if (this.tool.mode === "building") {
       const { width, depth } = this.tool;
       const valid = hover.surface === SurfaceType.Land;
@@ -605,6 +978,37 @@ export class PeninsulaScene {
       ghost.position.set(hover.tileX + width * 0.5, 1.65, hover.tileY + depth * 0.5);
       this.previewGroup.add(ghost);
     }
+  }
+
+  public getCameraState(): {
+    readonly centerX: number;
+    readonly centerY: number;
+    readonly zoomLevel: number;
+    readonly waterRatio: number;
+  } {
+    const cx = Math.max(0, Math.min(GRID_WIDTH - 1, Math.round(this.target.x)));
+    const cy = Math.max(0, Math.min(GRID_HEIGHT - 1, Math.round(this.target.z)));
+    let waterHits = 0;
+    let totalSamples = 0;
+    if (this.surfaceBytes) {
+      for (const dy of [-10, 0, 10]) {
+        for (const dx of [-10, 0, 10]) {
+          const sx = Math.max(0, Math.min(GRID_WIDTH - 1, cx + dx));
+          const sy = Math.max(0, Math.min(GRID_HEIGHT - 1, cy + dy));
+          totalSamples += 1;
+          const surf = this.surfaceBytes[sy * GRID_WIDTH + sx]!;
+          if (surf === SurfaceType.Sea || surf === SurfaceType.River) {
+            waterHits += 1;
+          }
+        }
+      }
+    }
+    return {
+      centerX: cx,
+      centerY: cy,
+      zoomLevel: this.zoomLevel,
+      waterRatio: totalSamples > 0 ? waterHits / totalSamples : 0,
+    };
   }
 
   private updateCameraTransform(): void {
@@ -715,6 +1119,25 @@ export class PeninsulaScene {
       if (this.tool.mode === "repair") {
         const segId = this.nearestRoadSegmentId(tile.tileX, tile.tileY, 3);
         if (segId) this.callbacks.onRepairSegment?.(segId);
+        return;
+      }
+
+      if (this.tool.mode === "demolish") {
+        const bId = this.pickBuildingAt(e.clientX, e.clientY);
+        if (bId) {
+          this.callbacks.onDemolishBuilding?.(bId);
+          return;
+        }
+        const z = this.lastSnapshot?.zones.find(
+          (x) =>
+            tile.tileX >= x.x &&
+            tile.tileX < x.x + x.width &&
+            tile.tileY >= x.y &&
+            tile.tileY < x.y + x.depth
+        );
+        if (z) {
+          this.callbacks.onDemolishZone?.(z.id);
+        }
         return;
       }
 
@@ -860,6 +1283,7 @@ export class PeninsulaScene {
     }
 
     this.trafficRenderer.update(elapsed);
+    this.roadBuilder.updateSignals(elapsed);
     if (this.followVehicleId) {
       const pos = this.trafficRenderer.getVehiclePosition(this.followVehicleId);
       if (pos) {
@@ -867,7 +1291,7 @@ export class PeninsulaScene {
         this.updateCameraTransform();
       }
     }
-    this.lotGenerator.updateAnimations(elapsed);
+    this.lotGenerator.update(dt);
     this.renderer.render(this.scene, this.camera);
   };
 
