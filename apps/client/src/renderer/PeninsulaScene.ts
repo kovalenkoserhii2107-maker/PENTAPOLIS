@@ -35,10 +35,15 @@ import { RoadMeshBuilder } from "./RoadMeshBuilder.ts";
 import { LotGenerator, type HeatmapOverlayKind } from "./LotGenerator.ts";
 import { TrafficRenderer } from "./TrafficRenderer.ts";
 import type { SoundSource } from "../audio/AudioEngine.ts";
+import { createTerrainSurface, FOREST_MASK_CELL, FOREST_MASK_H, FOREST_MASK_W, type TerrainSurface } from "./TerrainSurface.ts";
+import { AUTUMN_TINTS, SPECIES_TINTS, createSpeciesGeometry, createTrunkGeometry, type TreeSpecies } from "./Foliage.ts";
 
-const MAX_FOLIAGE_TREES = 20_000;
-const FOLIAGE_GREEN_HEX = [0x15803d, 0x16a34a, 0x22c55e, 0x4d7c0f] as const;
-const FOLIAGE_AUTUMN_HEX = [0xdc2626, 0xea580c, 0xd97706] as const;
+const MAX_TREES_PER_SPECIES = 30_000;
+const TREE_SPECIES: readonly TreeSpecies[] = ["broadleaf", "conifer", "poplar", "bush"];
+const SUN_POSITION = new THREE.Vector3(220, 620, 180);
+const SUN_TARGET = new THREE.Vector3(500, 0, 500);
+/** Direction from the ground towards the isometric camera. */
+const VIEW_DIRECTION = new THREE.Vector3(1, 0.8165, 1).normalize();
 
 function tileHash(x: number, y: number, salt = 0): number {
   let h = (Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(salt, 1442695041)) >>> 0;
@@ -46,18 +51,35 @@ function tileHash(x: number, y: number, salt = 0): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-function forestClusterNoise(x: number, y: number): number {
-  const gx = Math.floor(x / 18);
-  const gy = Math.floor(y / 18);
-  const fx = (x % 18) / 18;
-  const fy = (y % 18) / 18;
+function valueNoise(x: number, y: number, cell: number, salt: number): number {
+  const gx = Math.floor(x / cell);
+  const gy = Math.floor(y / cell);
+  const fx = x / cell - gx;
+  const fy = y / cell - gy;
   const u = fx * fx * (3 - 2 * fx);
   const v = fy * fy * (3 - 2 * fy);
-  const n00 = (tileHash(gx, gy, 11) & 1023) / 1023;
-  const n10 = (tileHash(gx + 1, gy, 11) & 1023) / 1023;
-  const n01 = (tileHash(gx, gy + 1, 11) & 1023) / 1023;
-  const n11 = (tileHash(gx + 1, gy + 1, 11) & 1023) / 1023;
+  const n00 = (tileHash(gx, gy, salt) & 1023) / 1023;
+  const n10 = (tileHash(gx + 1, gy, salt) & 1023) / 1023;
+  const n01 = (tileHash(gx, gy + 1, salt) & 1023) / 1023;
+  const n11 = (tileHash(gx + 1, gy + 1, salt) & 1023) / 1023;
   return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v;
+}
+
+/** Natural woodland density 0..1: big organic groves with ragged edges. */
+function forestDensity(x: number, y: number): number {
+  return valueNoise(x, y, 52, 11) * 0.55 + valueNoise(x, y, 17, 23) * 0.3 + valueNoise(x, y, 6, 31) * 0.15;
+}
+
+const smooth01 = (e0: number, e1: number, v: number) => {
+  const t = Math.min(1, Math.max(0, (v - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+
+/** Same southern-range mask as the terrain shader (`tMountains`). */
+function mountainWeight(y: number, coast: number): number {
+  const south = smooth01(560, 720, y) * (1 - smooth01(880, 960, y));
+  const alongCoast = smooth01(2, 10, coast) * (1 - smooth01(55, 120, coast));
+  return Math.min(1, south * alongCoast * 1.25);
 }
 
 export type ActiveToolState =
@@ -122,7 +144,9 @@ export class PeninsulaScene {
   private readonly lotGenerator = new LotGenerator();
   private readonly foliageGroup = new THREE.Group();
   private foliageTrunks: THREE.InstancedMesh | null = null;
-  private foliageCrowns: THREE.InstancedMesh | null = null;
+  private foliageShadows: THREE.InstancedMesh | null = null;
+  private readonly foliageCrowns = new Map<TreeSpecies, THREE.InstancedMesh>();
+  private terrain: TerrainSurface | null = null;
   private lastFoliageSignature = "";
   private depositsCache: readonly ResourceDepositSite[] = [];
   private readonly markersGroup = new THREE.Group();
@@ -139,7 +163,6 @@ export class PeninsulaScene {
 
   private surfaceBytes: Uint8Array | null = null;
   private ownerBytes: Uint8Array | null = null;
-  private terrainMesh: THREE.Mesh | null = null;
 
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly raycaster = new THREE.Raycaster();
@@ -172,7 +195,7 @@ export class PeninsulaScene {
     this.catalogs = catalogs;
     this.callbacks = callbacks;
 
-    this.scene.background = new THREE.Color(0x071426);
+    this.scene.background = new THREE.Color(0x0a2347);
 
     const w = Math.max(1, container.clientWidth);
     const h = Math.max(1, container.clientHeight);
@@ -198,8 +221,8 @@ export class PeninsulaScene {
     this.scene.add(hemi);
 
     const sun = new THREE.DirectionalLight(0xfffbeb, 1.15);
-    sun.position.set(220, 620, 180);
-    sun.target.position.set(500, 0, 500);
+    sun.position.copy(SUN_POSITION);
+    sun.target.position.copy(SUN_TARGET);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.left = -550;
@@ -409,9 +432,8 @@ export class PeninsulaScene {
     this.lotGenerator.group.visible = !on;
     this.foliageGroup.visible = !on;
     this.busRoutesGroup.visible = !on;
-    if (this.terrainMesh) {
-      const mat = this.terrainMesh.material as THREE.MeshLambertMaterial;
-      mat.color.setHex(on ? 0x2a2f45 : 0xffffff);
+    if (this.terrain) {
+      this.terrain.material.color.setHex(on ? 0x2a2f45 : 0xffffff);
     }
   }
 
@@ -474,96 +496,14 @@ export class PeninsulaScene {
     this.surfaceBytes = surfaceBytes;
     this.ownerBytes = ownerBytes;
 
-    const rgba = new Uint8Array(GRID_WIDTH * GRID_HEIGHT * 4);
-    for (let y = 0; y < GRID_HEIGHT; y++) {
-      const rowOff = y * GRID_WIDTH;
-      for (let x = 0; x < GRID_WIDTH; x++) {
-        const idx = rowOff + x;
-        const surf = surfaceBytes[idx]!;
-        const ow = ownerBytes[idx]!;
-        let r = 11;
-        let g = 38;
-        let b = 69;
-
-        if (surf === SurfaceType.Mainland) {
-          r = 78;
-          g = 92;
-          b = 82;
-        } else if (surf === SurfaceType.River) {
-          r = 28;
-          g = 118;
-          b = 196;
-        } else if (surf === SurfaceType.Land) {
-          const base = SECTOR_LAND_RGB[ow] ?? [96, 132, 96];
-          const checker = ((x >> 2) + (y >> 2)) & 1 ? 4 : -3;
-          r = base[0] + checker;
-          g = base[1] + checker;
-          b = base[2] + checker;
-
-          // Highlight sector boundary lines & Central Core golden ring
-          const rightOw = x + 1 < GRID_WIDTH ? ownerBytes[idx + 1]! : ow;
-          const downOw = y + 1 < GRID_HEIGHT ? ownerBytes[idx + GRID_WIDTH]! : ow;
-          if (rightOw !== ow || downOw !== ow) {
-            if (ow === OwnerCode.CentralCore || rightOw === OwnerCode.CentralCore || downOw === OwnerCode.CentralCore) {
-              r = 245;
-              g = 190;
-              b = 45;
-            } else if (rightOw !== OwnerCode.None && downOw !== OwnerCode.None) {
-              r = 226;
-              g = 232;
-              b = 240;
-            } else {
-              // Sandy coastline rim
-              r = 214;
-              g = 196;
-              b = 148;
-            }
-          }
-        } else {
-          // Coastal shallow water glow near land
-          const nearLand =
-            (x > 3 && surfaceBytes[idx - 3] === SurfaceType.Land) ||
-            (x + 3 < GRID_WIDTH && surfaceBytes[idx + 3] === SurfaceType.Land) ||
-            (y > 3 && surfaceBytes[idx - 3 * GRID_WIDTH] === SurfaceType.Land) ||
-            (y + 3 < GRID_HEIGHT && surfaceBytes[idx + 3 * GRID_WIDTH] === SurfaceType.Land);
-          if (nearLand) {
-            r = 18;
-            g = 68;
-            b = 112;
-          }
-        }
-
-        const p = idx * 4;
-        rgba[p] = r;
-        rgba[p + 1] = g;
-        rgba[p + 2] = b;
-        rgba[p + 3] = 255;
-      }
+    if (this.terrain) {
+      this.scene.remove(this.terrain.mesh);
+      this.terrain.dispose();
     }
-
-    const tex = new THREE.DataTexture(rgba, GRID_WIDTH, GRID_HEIGHT, THREE.RGBAFormat);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.LinearFilter;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-
-    if (this.terrainMesh) {
-      this.scene.remove(this.terrainMesh);
-      this.terrainMesh.geometry.dispose();
-    }
-
-    const planeGeo = new THREE.PlaneGeometry(GRID_WIDTH, GRID_HEIGHT);
-    planeGeo.rotateX(-Math.PI / 2);
-    const planeMat = new THREE.MeshLambertMaterial({ map: tex });
-    this.terrainMesh = new THREE.Mesh(planeGeo, planeMat);
-    // Notice: PlaneGeometry after rotateX(-PI/2) maps UV v=0 to +Z and v=1 to -Z unless flipped;
-    // setting repeat.y = -1 & offset.y = 1 aligns DataTexture row `y` cleanly with world `+Z = y`!
-    tex.wrapS = THREE.ClampToEdgeWrapping;
-    tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.flipY = false;
-    this.terrainMesh.position.set(GRID_WIDTH * 0.5, 0, GRID_HEIGHT * 0.5);
-    this.terrainMesh.receiveShadow = true;
-    this.scene.add(this.terrainMesh);
+    const sunDir = SUN_POSITION.clone().sub(SUN_TARGET).normalize();
+    this.terrain = createTerrainSurface(this.renderer, surfaceBytes, sunDir, VIEW_DIRECTION);
+    if (this.undergroundView) this.terrain.material.color.setHex(0x2a2f45);
+    this.scene.add(this.terrain.mesh);
 
     this.depositsCache = deposits;
     this.buildStaticMarkers(gateways, deposits);
@@ -681,34 +621,36 @@ export class PeninsulaScene {
   public rebuildFoliage(): void {
     const surface = this.surfaceBytes;
     const owner = this.ownerBytes;
-    if (!surface || !owner) return;
+    const terrain = this.terrain;
+    if (!surface || !owner || !terrain) return;
 
-    if (!this.foliageTrunks || !this.foliageCrowns) {
-      const trunkGeo = new THREE.CylinderGeometry(0.09, 0.15, 0.72, 5);
-      trunkGeo.translate(0, 0.36, 0);
+    if (!this.foliageTrunks) {
       this.foliageTrunks = new THREE.InstancedMesh(
-        trunkGeo,
-        new THREE.MeshLambertMaterial({ color: 0x5c4033 }),
-        MAX_FOLIAGE_TREES
+        createTrunkGeometry(),
+        new THREE.MeshLambertMaterial({ color: 0x6b4a32 }),
+        MAX_TREES_PER_SPECIES * 3
       );
-      this.foliageTrunks.castShadow = false;
-      this.foliageTrunks.receiveShadow = true;
       this.foliageTrunks.frustumCulled = false;
-
-      const crownGeo = new THREE.DodecahedronGeometry(0.68, 0);
-      crownGeo.scale(1, 1.18, 1);
-      crownGeo.translate(0, 1.15, 0);
-      this.foliageCrowns = new THREE.InstancedMesh(
-        crownGeo,
-        new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }),
-        MAX_FOLIAGE_TREES
-      );
-      this.foliageCrowns.castShadow = true;
-      this.foliageCrowns.receiveShadow = true;
-      this.foliageCrowns.frustumCulled = false;
-
       this.foliageGroup.add(this.foliageTrunks);
-      this.foliageGroup.add(this.foliageCrowns);
+      // Soft blob shadows cast away from the sun, so trees sit on the ground
+      const shadowGeo = new THREE.CircleGeometry(0.5, 10);
+      shadowGeo.rotateX(-Math.PI / 2);
+      this.foliageShadows = new THREE.InstancedMesh(
+        shadowGeo,
+        new THREE.MeshBasicMaterial({ color: 0x0b1a10, transparent: true, opacity: 0.32, depthWrite: false }),
+        MAX_TREES_PER_SPECIES * TREE_SPECIES.length
+      );
+      this.foliageShadows.frustumCulled = false;
+      this.foliageShadows.renderOrder = 1;
+      this.foliageGroup.add(this.foliageShadows);
+      const crownMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true, flatShading: true });
+      for (const sp of TREE_SPECIES) {
+        const mesh = new THREE.InstancedMesh(createSpeciesGeometry(sp), crownMat, MAX_TREES_PER_SPECIES);
+        mesh.frustumCulled = false;
+        mesh.receiveShadow = true;
+        this.foliageCrowns.set(sp, mesh);
+        this.foliageGroup.add(mesh);
+      }
     }
 
     // 0 = free land, 1 = blocked (road/building/deposit/non-yard zone), 2 = park, 3 = RES-01/02 yard
@@ -772,38 +714,48 @@ export class PeninsulaScene {
 
     const dummy = new THREE.Object3D();
     const col = new THREE.Color();
-    let count = 0;
+    const counts = new Map<TreeSpecies, number>(TREE_SPECIES.map((sp) => [sp, 0]));
+    let trunks = 0;
+    let shadows = 0;
+    const shadowDummy = new THREE.Object3D();
+    const sunAway = SUN_TARGET.clone().sub(SUN_POSITION).setY(0).normalize();
 
-    const placeTree = (wx: number, wz: number, scale: number, hVal: number) => {
-      if (count >= MAX_FOLIAGE_TREES) return;
+    const placeTree = (species: TreeSpecies, wx: number, wz: number, scale: number, hVal: number, autumn = false) => {
+      const mesh = this.foliageCrowns.get(species)!;
+      const n = counts.get(species)!;
+      if (n >= MAX_TREES_PER_SPECIES) return;
       dummy.position.set(wx, 0, wz);
       dummy.rotation.set(0, ((hVal & 255) / 255) * Math.PI * 2, 0);
-      dummy.scale.set(scale, scale * (0.9 + ((hVal >>> 8) & 31) / 100), scale);
+      dummy.scale.set(scale, scale * (0.88 + ((hVal >>> 8) & 31) / 120), scale);
       dummy.updateMatrix();
-      this.foliageTrunks!.setMatrixAt(count, dummy.matrix);
-      this.foliageCrowns!.setMatrixAt(count, dummy.matrix);
-
-      // 78% lush greens (#15803d, #16a34a, #22c55e, #4d7c0f) + 22% autumn accents (#dc2626, #ea580c, #d97706)
-      const roll = (hVal >>> 16) % 100;
-      const hex =
-        roll < 78
-          ? FOLIAGE_GREEN_HEX[hVal % FOLIAGE_GREEN_HEX.length]!
-          : FOLIAGE_AUTUMN_HEX[hVal % FOLIAGE_AUTUMN_HEX.length]!;
-      this.foliageCrowns!.setColorAt(count, col.setHex(hex));
-      count++;
+      mesh.setMatrixAt(n, dummy.matrix);
+      const tints = autumn ? AUTUMN_TINTS : SPECIES_TINTS[species];
+      mesh.setColorAt(n, col.setHex(tints[(hVal >>> 4) % tints.length]!));
+      counts.set(species, n + 1);
+      const reach = species === "bush" ? 0.15 : species === "poplar" ? 0.7 : 0.5;
+      const size = species === "bush" ? 0.9 : species === "poplar" ? 0.85 : species === "conifer" ? 1.25 : 1.6;
+      shadowDummy.position.set(wx + sunAway.x * reach * scale, 0.03, wz + sunAway.z * reach * scale);
+      shadowDummy.scale.set(size * scale, 1, size * scale * 0.8);
+      shadowDummy.rotation.set(0, Math.atan2(sunAway.x, sunAway.z), 0);
+      shadowDummy.updateMatrix();
+      this.foliageShadows!.setMatrixAt(shadows++, shadowDummy.matrix);
+      if (species !== "bush") {
+        this.foliageTrunks!.setMatrixAt(trunks, dummy.matrix);
+        trunks++;
+      }
     };
 
-    // Pass 1: Planted urban trees inside parks (`mask === 2`) and residential yards (`mask === 3`)
+    // Pass 1: planted urban trees inside parks (`mask === 2`) and residential yards (`mask === 3`)
     if (snap) {
       for (const b of snap.buildings) {
         const idx0 = b.tileY * GRID_WIDTH + b.tileX;
         if (mask[idx0] !== 2) continue;
-        for (let y = b.tileY + 1; y < b.tileY + b.depth - 1 && count < MAX_FOLIAGE_TREES; y += 2) {
-          for (let x = b.tileX + 1; x < b.tileX + b.width - 1 && count < MAX_FOLIAGE_TREES; x += 2) {
+        for (let y = b.tileY + 1; y < b.tileY + b.depth - 1; y += 2) {
+          for (let x = b.tileX + 1; x < b.tileX + b.width - 1; x += 2) {
             const h = tileHash(x, y, 71);
-            if ((h % 10) < 6) {
-              placeTree(x + 0.5, y + 0.5, 0.85 + (h % 25) * 0.01, h);
-            }
+            const roll = h % 10;
+            if (roll < 5) placeTree("broadleaf", x + 0.5, y + 0.5, 0.8 + (h % 25) * 0.012, h, (h >>> 20) % 100 < 18);
+            else if (roll < 7) placeTree("bush", x + 0.5, y + 0.5, 1 + (h % 20) * 0.02, h);
           }
         }
       }
@@ -811,58 +763,86 @@ export class PeninsulaScene {
       for (const z of snap.zones) {
         if (z.zoneKind !== "RES-01" && z.zoneKind !== "RES-02") continue;
         const step = z.zoneKind === "RES-01" ? 3 : 4;
-        for (let y = z.y; y <= z.y + z.depth && count < MAX_FOLIAGE_TREES; y += step) {
-          for (let x = z.x; x <= z.x + z.width && count < MAX_FOLIAGE_TREES; x += step) {
+        for (let y = z.y; y <= z.y + z.depth; y += step) {
+          for (let x = z.x; x <= z.x + z.width; x += step) {
             if (x < 0 || x >= GRID_WIDTH || y < 0 || y >= GRID_HEIGHT) continue;
             if (mask[y * GRID_WIDTH + x] === 1) continue;
             const h = tileHash(x, y, 89);
-            if ((h % 10) < 7) {
-              placeTree(x + 0.15, y + 0.15, 0.72 + (h % 20) * 0.01, h);
-            }
+            const roll = h % 10;
+            if (roll < 4) placeTree("broadleaf", x + 0.15, y + 0.15, 0.7 + (h % 20) * 0.01, h, (h >>> 20) % 100 < 15);
+            else if (roll < 6) placeTree("bush", x + 0.15, y + 0.15, 0.9 + (h % 20) * 0.02, h);
+            else if (roll < 7) placeTree("poplar", x + 0.15, y + 0.15, 0.85, h);
           }
         }
       }
     }
 
-    // Pass 2: Natural forests & riverbank groves across unoccupied `SurfaceType.Land`
-    for (let y = 4; y < GRID_HEIGHT - 4 && count < MAX_FOLIAGE_TREES; y += 3) {
+    // Pass 2: natural woods, riverside groves and scattered meadow trees on free land
+    const forestMask = new Uint8Array(FOREST_MASK_W * FOREST_MASK_H);
+    const { coast, river } = terrain.fields;
+    for (let y = 2; y < GRID_HEIGHT - 2; y += 2) {
       const rowOff = y * GRID_WIDTH;
-      for (let x = 4; x < GRID_WIDTH - 4 && count < MAX_FOLIAGE_TREES; x += 3) {
+      for (let x = 2; x < GRID_WIDTH - 2; x += 2) {
         const idx = rowOff + x;
         if (surface[idx] !== SurfaceType.Land || mask[idx] !== 0) continue;
+        const c = coast[idx]!;
+        if (c < 3) continue; // beach
+        const rv = river[idx]!;
+        if (rv < 1) continue;
         const ow = owner[idx]!;
         if (ow === OwnerCode.CentralCore) {
           const distCore = Math.hypot(x - CORE_CENTER_X, y - CORE_CENTER_Y);
           if (distCore > 55 && distCore < 63) continue;
         }
 
-        const nearRiver =
-          surface[idx - 2] === SurfaceType.River ||
-          surface[idx + 2] === SurfaceType.River ||
-          surface[idx - 2 * GRID_WIDTH] === SurfaceType.River ||
-          surface[idx + 2 * GRID_WIDTH] === SurfaceType.River;
-
+        const mount = mountainWeight(y, c);
+        const steppe = Math.min(1, Math.max(0, (420 - y) / 260 + (x - 640) / 420));
+        const bonus =
+          (ow === OwnerCode.Sector3 ? 0.05 : ow === OwnerCode.Sector4 ? 0.06 : 0) +
+          mount * 0.2 +
+          (rv < 7 ? 0.18 * (1 - rv / 7) : 0) -
+          steppe * 0.14 -
+          (c < 8 ? (8 - c) * 0.03 : 0);
+        const density = forestDensity(x, y) + bonus;
+        const inForest = density > 0.56;
         const h = tileHash(x, y, 37);
-        const cluster = forestClusterNoise(x, y);
-        const sectorDensityBonus = ow === OwnerCode.Sector3 ? 0.12 : ow === OwnerCode.Sector4 ? 0.06 : 0;
-        const spawnChance = nearRiver ? 0.58 : cluster > 0.53 - sectorDensityBonus ? (cluster - 0.35) * 0.52 : 0.025;
-
-        if ((h & 1023) / 1023 < spawnChance) {
-          const jx = ((h >>> 10) & 31) / 31 - 0.5;
-          const jz = ((h >>> 15) & 31) / 31 - 0.5;
-          const scale = 0.8 + ((h >>> 20) & 31) / 64;
-          placeTree(x + 0.5 + jx * 1.6, y + 0.5 + jz * 1.6, scale, h);
+        const chance = inForest ? Math.min(0.92, 0.55 + (density - 0.56) * 2.2) : rv < 5 ? 0.22 : 0.02 + Math.max(0, density - 0.45) * 0.3;
+        if (inForest) {
+          const mi = Math.floor(y / FOREST_MASK_CELL) * FOREST_MASK_W + Math.floor(x / FOREST_MASK_CELL);
+          forestMask[mi] = Math.min(255, forestMask[mi]! + 64);
         }
+        if ((h & 1023) / 1023 >= chance) continue;
+
+        const jx = ((h >>> 10) & 31) / 31 - 0.5;
+        const jz = ((h >>> 15) & 31) / 31 - 0.5;
+        const s = ((h >>> 20) & 31) / 31;
+        const pick = (h >>> 25) % 100;
+        const coniferShare = Math.min(0.9, 0.12 + mount * 0.75 + (y < 330 ? 0.15 : 0));
+        let species: TreeSpecies;
+        if (inForest) {
+          species = pick < coniferShare * 100 ? "conifer" : pick < 92 ? "broadleaf" : "bush";
+        } else if (rv < 5) {
+          species = pick < 45 ? "broadleaf" : pick < 75 ? "poplar" : "bush";
+        } else {
+          species = pick < 50 ? "bush" : pick < 85 ? "broadleaf" : "poplar";
+        }
+        const scale =
+          species === "conifer" ? 0.85 + s * 0.5 : species === "bush" ? 0.9 + s * 0.7 : species === "poplar" ? 0.9 + s * 0.3 : 0.85 + s * 0.45;
+        const autumn = species === "broadleaf" && (h >>> 3) % 100 < 12;
+        placeTree(species, x + 0.5 + jx * 1.7, y + 0.5 + jz * 1.7, scale, h, autumn);
       }
     }
+    terrain.setForestMask(forestMask);
 
-    this.foliageTrunks.count = count;
-    this.foliageCrowns.count = count;
-    this.foliageTrunks.instanceMatrix.needsUpdate = true;
-    this.foliageCrowns.instanceMatrix.needsUpdate = true;
-    if (this.foliageCrowns.instanceColor) {
-      this.foliageCrowns.instanceColor.needsUpdate = true;
+    for (const [sp, mesh] of this.foliageCrowns) {
+      mesh.count = counts.get(sp)!;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+    this.foliageTrunks.count = trunks;
+    this.foliageTrunks.instanceMatrix.needsUpdate = true;
+    this.foliageShadows!.count = shadows;
+    this.foliageShadows!.instanceMatrix.needsUpdate = true;
   }
 
   private rebuildEmergencies(emergencies: readonly ActiveEmergencyDto[]): void {
@@ -1418,12 +1398,14 @@ export class PeninsulaScene {
       }
     }
     this.lotGenerator.update(dt);
+    this.terrain?.update(elapsed);
     this.renderer.render(this.scene, this.camera);
   };
 
   public dispose(): void {
     cancelAnimationFrame(this.rafId);
     this.cleanupListeners?.();
+    this.terrain?.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentElement === this.container) {
       this.container.removeChild(this.renderer.domElement);

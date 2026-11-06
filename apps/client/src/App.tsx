@@ -244,6 +244,8 @@ export const App: React.FC = () => {
       },
     });
     sceneRef.current = scene;
+    // Dev-only handle for camera checks from the console
+    if (import.meta.env.DEV) (window as unknown as { __pentapolisScene?: PeninsulaScene }).__pentapolisScene = scene;
 
     let cancelled = false;
     void (async () => {
