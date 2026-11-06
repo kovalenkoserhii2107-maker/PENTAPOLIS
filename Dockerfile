@@ -3,11 +3,11 @@ FROM oven/bun:1 AS base
 WORKDIR /app
 
 # Install workspace dependencies with frozen lockfile if present
-COPY package.json bun.lock* ./
+COPY package.json bun.lock tsconfig.base.json ./
 COPY packages/shared-sim/package.json ./packages/shared-sim/package.json
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/client/package.json ./apps/client/package.json
-RUN bun install
+RUN bun install --frozen-lockfile
 
 # Copy monorepo sources and build production SPA bundle (`apps/client/dist`)
 COPY . .

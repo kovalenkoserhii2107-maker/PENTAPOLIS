@@ -167,7 +167,7 @@ describe("Sprint 7: border posts, cross-border trade, megaprojects, exchange, AI
     expect(epidemicContagionMultiplier(true)).toBeCloseTo(0.1);
   });
 
-  test("trunk gas pipeline boosts neighbour steel +40% and powers ENG-02; emergency gas valve shutoff immediately drops boost and forces 45% fuel-oil mode", () => {
+  test("trunk gas pipeline boosts neighbour steel +40% and powers ENG-02; closing the gas valve waits out the notice window, then drops the boost and forces 45% fuel-oil mode", () => {
     const s = boot();
     const w = s.world;
     buildCorridor(s);
@@ -193,7 +193,7 @@ describe("Sprint 7: border posts, cross-border trade, megaprojects, exchange, AI
     const mwOpen = openSnap.sectors.find((sec) => sec.sectorId === 2)!.powerSupplyMw;
     expect(mwOpen).toBeGreaterThan(100);
 
-    // Emergency gas valve shutoff by S1
+    // S1 closes the valve: a hostile move, so the neighbour keeps its gas for the notice window (GDD §1.4)
     const shut = w.executeCommand({
       type: "set_gas_valve",
       sectorId: 1,
@@ -201,6 +201,9 @@ describe("Sprint 7: border posts, cross-border trade, megaprojects, exchange, AI
       open: false,
     });
     expect(shut.ok, shut.message).toBe(true);
+    expect(shut.message).toContain("через 6");
+    expect(w.getSnapshot().gas.find((g) => g.sectorId === 2)!.gasifiedPlants).toBeGreaterThan(0);
+    for (let d = 0; d < 6; d++) w.executeCommand({ type: "admin_time_skip", jump: "1d" });
 
     const closedSnap = w.getSnapshot();
     const s2GasClosed = closedSnap.gas.find((g) => g.sectorId === 2)!;

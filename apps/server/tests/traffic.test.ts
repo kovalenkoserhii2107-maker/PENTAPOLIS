@@ -12,7 +12,8 @@ import { createPentapolisServer, type RunningPentapolisServer } from "../src/ind
 
 /**
  * Sector 1 test district on clean land (290..430, 200..280):
- *   y=210 commuter street: RES-02 homes (300,212) -> COM-02 shops (400,212), bus stops at both ends
+ *   y=210 commuter street: RES-02 homes (300,212) -> COM-02 shops (400,212), bus stops at both ends,
+ *                          linked north to the Northern Highway gateway (425,48) for material imports
  *   y=255 haul street:     Iron mine EXT-01 (300,232) -> Steel mill PRO-01 (370,232)
  */
 describe("Sprint 5: live traffic, road wear, bus licences, metro & agent dossiers", () => {
@@ -41,6 +42,9 @@ describe("Sprint 5: live traffic, road wear, bus licences, metro & agent dossier
     const cmds = [
       { type: "build_segment", sectorId: 1, kind: "street_2lane", fromX: 300, fromY: 210, toX: 420, toY: 210 },
       { type: "build_segment", sectorId: 1, kind: "street_2lane", fromX: 300, fromY: 255, toX: 420, toY: 255 },
+      // Link to the Northern Highway gateway stub so developers can import building materials
+      { type: "build_segment", sectorId: 1, kind: "street_2lane", fromX: 425, fromY: 48, toX: 425, toY: 210 },
+      { type: "build_segment", sectorId: 1, kind: "street_2lane", fromX: 420, fromY: 210, toX: 425, toY: 210 },
       { type: "paint_zone", sectorId: 1, zoneKind: "RES-02", x: 300, y: 212, width: 12, depth: 12 },
       { type: "paint_zone", sectorId: 1, zoneKind: "COM-02", x: 400, y: 212, width: 12, depth: 12 },
       { type: "place_building", sectorId: 1, catalogId: "EXT-01", tileX: 300, tileY: 232 },

@@ -5,4 +5,7 @@ export * from "./catalogs/index.ts";
 export * from "./economy/RegionalMoneyEngine.ts";
 export * from "./map/PeninsulaGrid.ts";
 export * from "./traffic/index.ts";
+export * from "./construction/developerMarket.ts";
+export * from "./city/index.ts";
+export * from "./geopolitics/index.ts";
 export * from "./protocol.ts";

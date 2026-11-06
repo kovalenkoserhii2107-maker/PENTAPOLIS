@@ -5,6 +5,7 @@ import {
   type CitizenDossierDto,
   type VehicleInspectorDto,
 } from "@pentapolis/shared-sim";
+import { apiUrl } from "../net/serverUrl.ts";
 
 interface AgentInspectorPanelProps {
   vehicleId: string;
@@ -55,7 +56,7 @@ export const AgentInspectorPanel: React.FC<AgentInspectorPanelProps> = ({
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch(`/api/vehicle/${encodeURIComponent(vehicleId)}`);
+        const res = await fetch(apiUrl(`/api/vehicle/${encodeURIComponent(vehicleId)}`));
         const data = (await res.json()) as VehicleInspectorDto & { error?: string };
         if (cancelled) return;
         if (!res.ok) {
@@ -80,7 +81,7 @@ export const AgentInspectorPanel: React.FC<AgentInspectorPanelProps> = ({
     if (!citizenId) return;
     let cancelled = false;
     void (async () => {
-      const res = await fetch(`/api/citizen/${encodeURIComponent(citizenId)}`);
+      const res = await fetch(apiUrl(`/api/citizen/${encodeURIComponent(citizenId)}`));
       if (cancelled) return;
       if (res.ok) setCitizen((await res.json()) as CitizenDossierDto);
       else setError("Досье недоступно: водитель сменился на тактическом тике");

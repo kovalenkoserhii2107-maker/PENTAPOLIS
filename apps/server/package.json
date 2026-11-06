@@ -10,6 +10,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@pentapolis/shared-sim": "workspace:*"
+    "@pentapolis/shared-sim": "workspace:*",
+    "web-push": "3.6.7"
+  },
+  "devDependencies": {
+    "@types/web-push": "3.6.4"
   }
 }

@@ -2,9 +2,20 @@
   "name": "PENTAPOLIS — Экономический Симулятор Полуострова",
   "short_name": "PENTAPOLIS",
   "description": "2.5D асинхронный градостроительный и макроэкономический симулятор для 5 мэров на одном полуострове",
-  "start_url": "/",
-  "display": "standalone",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
   "orientation": "landscape",
   "background_color": "#0b1220",
-  "theme_color": "#0b1220"
+  "theme_color": "#0b1220",
+  "lang": "ru",
+  "categories": ["games", "simulation"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
 }

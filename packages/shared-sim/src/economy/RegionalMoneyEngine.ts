@@ -1159,6 +1159,9 @@ export class RegionalMoneyEngine {
     const extraFc = customRows.reduce((s, r) => s + r[2], 0n);
     const extraTrev = customRows.reduce((s, r) => (r[4] > 0n ? s + r[4] : s), 0n);
     const extraTexp = customRows.reduce((s, r) => (r[4] < 0n ? s - r[4] : s), 0n);
+    // City flows booked by the server were already paid from / into the treasury's cash account,
+    // so they settle against that account rather than through new bond issuance.
+    const customTreasuryNet = customRows.reduce((s, r) => s + r[4], 0n);
 
     const divT = mulRate(div, stateEquityEffective);
     const divH = div - divT;
@@ -1305,7 +1308,7 @@ export class RegionalMoneyEngine {
     // ---- 9. Financial Account (`Δ` Stocks)
     const dDh = nlHH + newMort - bankRecapShares;
     const dLf = -nlFk + dDf;
-    const dTreasuryCash = 0n;
+    const dTreasuryCash = customTreasuryNet;
     const dB = -(nlT + dImfLocal - dSwfLocal) + dTreasuryCash;
 
     const cbBondShareEffective = reg.imf.active ? 0 : reg.levers.cbBondPurchaseShare;
@@ -1408,7 +1411,8 @@ export class RegionalMoneyEngine {
     reg.govBondsCb += dBCb;
     reg.cbRefinancing += dRefi;
     reg.bankCapital = reg.bankCapital - bankLoss + bankRecapShares;
-    reg.treasuryCashAtCb += dTreasuryCash;
+    // The server moved this cash when the flows happened; only the ledger records it here.
+    reg.treasuryCashAtCb += dTreasuryCash - customTreasuryNet;
 
     // External WCU stocks & floating FX rate update (GDD §3.2 & Sheet 08)
     const bopInflowLocal = -worldNetAfterImfSwf; // > 0 when region runs external surplus

@@ -26,6 +26,7 @@ import {
   type ServerMessage,
 } from "@pentapolis/shared-sim";
 import { WorldSimulation } from "./worldServer.ts";
+import { PushService, type BrowserPushSubscription, type PushSender } from "./push.ts";
 
 export interface PentapolisServerOptions {
   readonly port?: number;
@@ -33,10 +34,13 @@ export interface PentapolisServerOptions {
   readonly worldId?: string;
   readonly staticDir?: string;
   readonly enableRealtimeLoop?: boolean;
+  /** Replaces real Web Push delivery (tests). */
+  readonly pushSender?: PushSender;
 }
 
 export interface RunningPentapolisServer {
   readonly world: WorldSimulation;
+  readonly push: PushService;
   readonly port: number;
   readonly url: string;
   stop: () => void;
@@ -72,6 +76,11 @@ export function createPentapolisServer(
   const staticDir =
     options.staticDir ?? resolve(import.meta.dir, "..", "..", "client", "dist");
   const world = new WorldSimulation(dbPath, options.worldId);
+  // Phone alerts (GDD §1.4): the simulation never waits for delivery
+  const push = new PushService(world.db, options.pushSender);
+  world.onMayorAlert = (sectorId, alert) => {
+    void push.notifySector(sectorId, alert).catch(() => undefined);
+  };
   const clients = new Set<ServerWebSocket<{ connectedAt: number }>>();
 
   // Prepack binary 2,000,000-byte terrain + sector owner buffer once
@@ -191,6 +200,32 @@ export function createPentapolisServer(
           : jsonResponse({ ok: false, error: `Гражданин ${id} не найден` }, 404);
       }
 
+      if (url.pathname === "/api/push/public-key" && req.method === "GET") {
+        return jsonResponse({ publicKey: push.publicKey });
+      }
+
+      if (url.pathname === "/api/push/subscribe" && req.method === "POST") {
+        return req
+          .json()
+          .then((body) => {
+            const { sectorId, subscription } = body as { sectorId: number; subscription: BrowserPushSubscription };
+            if (![1, 2, 3, 4, 5].includes(sectorId)) throw new Error("Неизвестный сектор");
+            push.subscribe(sectorId as 1 | 2 | 3 | 4 | 5, subscription);
+            return jsonResponse({ ok: true });
+          })
+          .catch((err: unknown) => jsonResponse({ ok: false, error: err instanceof Error ? err.message : "Bad request" }, 400));
+      }
+
+      if (url.pathname === "/api/push/unsubscribe" && req.method === "POST") {
+        return req
+          .json()
+          .then((body) => {
+            push.unsubscribe(String((body as { endpoint: string }).endpoint));
+            return jsonResponse({ ok: true });
+          })
+          .catch(() => jsonResponse({ ok: false }, 400));
+      }
+
       if (url.pathname === "/api/command" && req.method === "POST") {
         return req
           .json()
@@ -306,6 +341,7 @@ export function createPentapolisServer(
   const resolvedPort = server.port ?? 3001;
   return {
     world,
+    push,
     port: resolvedPort,
     url: `http://localhost:${resolvedPort}`,
     stop: () => {

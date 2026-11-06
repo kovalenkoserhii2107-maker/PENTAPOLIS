@@ -14,9 +14,12 @@ import {
   Users,
   Volume2,
   VolumeX,
+  Bell,
+  BellOff,
   Zap,
 } from "lucide-react";
 import { formatMoney, type SectorId, type WorldSnapshotDto } from "@pentapolis/shared-sim";
+import type { PushState } from "../net/push.ts";
 import type { HeatmapOverlayKind } from "../renderer/LotGenerator.ts";
 
 interface TopHudBarProps {
@@ -37,7 +40,16 @@ interface TopHudBarProps {
   audioVolume?: number;
   onToggleMute?: () => void;
   onChangeVolume?: (volume: number) => void;
+  pushState?: PushState;
+  onTogglePush?: () => void;
 }
+
+const PUSH_TITLES: Readonly<Record<PushState, string>> = {
+  unsupported: "Этот браузер не поддерживает Web Push (на iPhone — установите игру на экран «Домой»)",
+  off: "Включить уведомления: окна уведомления соседей, ЧП, поглощения, ИИ-Губернатор",
+  on: "Уведомления включены — нажмите, чтобы отключить",
+  denied: "Уведомления запрещены в настройках браузера",
+};
 
 const OVERLAY_ITEMS: readonly { id: HeatmapOverlayKind; label: string; title: string }[] = [
   { id: "none", label: "Выкл", title: "Обычный 3D-вид зданий и крыш" },
@@ -64,6 +76,8 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
   audioVolume = 0.55,
   onToggleMute,
   onChangeVolume,
+  pushState = "unsupported",
+  onTogglePush,
 }) => {
   const sec = snapshot.sectors.find((s) => s.sectorId === activeSectorId) ?? snapshot.sectors[0]!;
   const treasuryFormatted = formatMoney(BigInt(sec.treasuryBalanceMinor));
@@ -276,6 +290,18 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
               />
             )}
           </div>
+        )}
+
+        {onTogglePush && (
+          <button
+            onClick={onTogglePush}
+            disabled={pushState === "unsupported" || pushState === "denied"}
+            className="flex items-center px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition disabled:opacity-40"
+            title={PUSH_TITLES[pushState]}
+            aria-label="Уведомления"
+          >
+            {pushState === "on" ? <Bell className="w-3.5 h-3.5 text-amber-300" /> : <BellOff className="w-3.5 h-3.5 text-slate-400" />}
+          </button>
         )}
 
         <button
