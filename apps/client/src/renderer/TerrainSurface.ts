@@ -306,6 +306,7 @@ const FRAGMENT_DECL = /* glsl */ `
   uniform float uTime;
   uniform float uBorders;
   uniform vec3 uViewDir;
+  uniform vec3 uGlintDir;
   uniform float uBoundaries[5];
   varying vec2 vTile;
   ${GLSL_FIELDS}
@@ -360,7 +361,7 @@ const FRAGMENT_COLOR = /* glsl */ `
     float s1 = tNoise(p * 0.16 + flow * 0.35);
     float s2 = tNoise(p * 0.07 - flow * 0.2 + 5.0);
     vec3 waveN = normalize(vec3((s1 - 0.5) * 0.55 + (w1 - 0.5) * 0.25 * fine1, 1.0, (s2 - 0.5) * 0.55 + (w2 - 0.5) * 0.2 * fine2));
-    float rv = max(dot(reflect(-uSunDir, waveN), uViewDir), 0.0);
+    float rv = max(dot(reflect(-uGlintDir, waveN), uViewDir), 0.0);
     // Sun sparkles only up close; from afar they would read as whitecaps everywhere
     float spec = pow(rv, 260.0) * 0.5 * (1.0 - smoothstep(0.1, 0.3, tPix));
 
@@ -462,7 +463,8 @@ export function createTerrainSurface(
   renderer: THREE.WebGLRenderer,
   surface: Uint8Array,
   sunDir: THREE.Vector3,
-  viewDir: THREE.Vector3
+  viewDir: THREE.Vector3,
+  glintDir: THREE.Vector3
 ): TerrainSurface {
   const fields = computeTerrainFields(surface);
   const fieldTex = fieldTexture(fields);
@@ -484,6 +486,7 @@ export function createTerrainSurface(
     uBorders: { value: 1 },
     uSunDir: { value: sun },
     uViewDir: { value: viewDir.clone().normalize() },
+    uGlintDir: { value: glintDir.clone().normalize() },
     uBoundaries: { value: [...SECTOR_BOUNDARY_DEGREES] },
   };
 
@@ -502,7 +505,7 @@ export function createTerrainSurface(
         "#include <emissivemap_fragment>\n  totalEmissiveRadiance += vec3(1.0, 0.97, 0.88) * tWaterGlint + vec3(0.45, 0.7, 1.0) * tWaterSheen;"
       );
   };
-  material.customProgramCacheKey = () => "pentapolis-terrain-v2";
+  material.customProgramCacheKey = () => "pentapolis-terrain-v3";
 
   // A wide plane so the sea continues to the horizon when zoomed out
   const span = 7000;

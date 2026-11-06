@@ -569,31 +569,47 @@ export function createCrispFacadeTexture(
   const upperRows = Math.max(1, Math.min(12, groundStyle === "house" ? Math.max(1, floors) : Math.max(1, floors - 1)));
   const availH = groundTopY - 10;
   const rowH = Math.max(6, Math.floor(availH / upperRows));
-  const cols = isGlass ? 8 : 6;
+  const lowRise = !isGlass && upperRows <= 3;
+  const cols = isGlass ? 8 : lowRise ? 3 : 6;
   const colStep = Math.floor(112 / cols);
 
   // Upper floor windows, mullions, sills & balconies
   for (let r = 0; r < upperRows; r++) {
-    const wy = 9 + r * rowH;
-    const winH = Math.max(3, rowH - 4);
+    const winW = Math.max(5, colStep - (isGlass ? 3 : lowRise ? 16 : 7));
+    // Real window proportions (not full-storey stripes): at most ~1.4 times as tall as wide
+    const winH = isGlass ? Math.max(3, rowH - 4) : Math.max(3, Math.min(rowH - 4, Math.round(winW * 1.4)));
+    const wy = 9 + r * rowH + Math.floor((rowH - 4 - winH) * 0.45);
+    const isDoorRow = groundStyle === "house" && r === upperRows - 1;
     for (let c = 0; c < cols; c++) {
-      const wx = 9 + c * colStep;
-      const winW = Math.max(5, colStep - (isGlass ? 3 : 7));
+      const wx = 9 + c * colStep + (lowRise ? 8 : 0);
       const h = (r * 17 + c * 31) % 7;
       const lit = h !== 0 && h !== 3;
+      // The house door takes the middle bay of the ground floor
+      if (isDoorRow && c === Math.floor(cols / 2)) continue;
 
       if (isGlass) {
         ctx.fillStyle = lit ? "rgba(224, 242, 254, 0.72)" : "rgba(15, 23, 42, 0.45)";
         ctx.fillRect(wx, wy, winW, winH);
       } else {
-        if (wearState === "new") {
-          ctx.fillStyle = lit ? (h === 1 ? "#fef3c7" : "#dbeafe") : "#1e293b";
-        } else if (wearState === "lived_in") {
-          ctx.fillStyle = lit ? (h === 2 ? "#fde68a" : "#93c5fd") : "#334155";
+        // Daytime glass: sky-blue panes, a few with curtains or lamps
+        if (wearState === "worn") {
+          ctx.fillStyle = lit ? "#7d8fa3" : "#2b3644";
         } else {
-          ctx.fillStyle = lit ? "#cbd5e1" : "#0f172a";
+          ctx.fillStyle = h === 1 ? "#f3e2b3" : lit ? "#5b7fa6" : "#34506e";
         }
         ctx.fillRect(wx, wy, winW, winH);
+        // Light frame, cross mullion and a sky reflection on the upper pane
+        if (winW >= 7 && winH >= 7) {
+          ctx.fillStyle = "rgba(160, 200, 235, 0.55)";
+          ctx.fillRect(wx + 1, wy + 1, Math.floor(winW / 2) - 1, Math.floor(winH / 2) - 1);
+          ctx.fillStyle = "#f1ede4";
+          ctx.fillRect(wx, wy, winW, 1);
+          ctx.fillRect(wx, wy + winH - 1, winW, 1);
+          ctx.fillRect(wx, wy, 1, winH);
+          ctx.fillRect(wx + winW - 1, wy, 1, winH);
+          ctx.fillRect(wx + Math.floor(winW / 2), wy, 1, winH);
+          ctx.fillRect(wx, wy + Math.floor(winH / 2), winW, 1);
+        }
 
         // Window sill / lintel on brick & stone facades
         if (isBrickOrStone) {
@@ -669,6 +685,21 @@ export function createCrispFacadeTexture(
     for (let hx = 0; hx < 128; hx += 8) ctx.fillRect(hx, 118, 4, 4);
     ctx.fillStyle = "#334155";
     ctx.fillRect(46, 98, 36, 24);
+  } else if (groundStyle === "house") {
+    // Front door with frame, step and a small canopy in the middle bay
+    const dw = 16;
+    const dx = 64 - dw / 2;
+    ctx.fillStyle = "#f1ede4";
+    ctx.fillRect(dx - 2, 90, dw + 4, 32);
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(dx, 92, dw, 30);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.25)";
+    ctx.fillRect(dx + 2, 95, dw - 4, 10);
+    ctx.fillRect(dx + 2, 108, dw - 4, 11);
+    ctx.fillStyle = "#e9c46a";
+    ctx.fillRect(dx + dw - 4, 106, 2, 2);
+    ctx.fillStyle = "#475569";
+    ctx.fillRect(dx - 6, 86, dw + 12, 4);
   }
 
   // Worn state: damp streaks under cornice & plinth cracks / pixel graffiti

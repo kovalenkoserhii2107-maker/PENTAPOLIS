@@ -121,6 +121,21 @@ const SECTOR_HEX_PALETTE: Readonly<
   5: { primaryHex: "#d8e6f2", accentHex: "#159a9c", roofHex: "#2a4359" },
 };
 
+/**
+ * Roof shades per sector: the sector's signature roof first, then warm terracotta, brown, slate
+ * and plum variants so a street never reads as one flat colour (visual reference: TheoTown).
+ */
+const SECTOR_ROOF_PALETTES: Readonly<Record<SectorId, readonly string[]>> = {
+  1: ["#4a4f58", "#6e4a3c", "#8a4b36", "#5a5368", "#5f6b73", "#7a5a44"],
+  2: ["#c9b38c", "#8a5a44", "#6f6a78", "#a8693f", "#5d6b78", "#9c7b5b"],
+  3: ["#b35c3e", "#8e4a35", "#6d5a4a", "#c07a4a", "#5c5f6b", "#7d4f5e"],
+  4: ["#a84c32", "#c0683e", "#7a4636", "#8f5f46", "#5e5a66", "#b5764e"],
+  5: ["#2a4359", "#3f5c73", "#5a4f6e", "#6b4f42", "#4d6470", "#7a5a4d"],
+};
+
+/** Shopfront / office wall shades mixed into the sector's own colour for single-model families. */
+const COMMERCIAL_WALLS: readonly string[] = ["#d9c7a7", "#e8dcc4", "#c98a63", "#b9c4cc", "#d6b98c", "#a8b8a0", "#e3c9b2"];
+
 const CLASS_WALL_PALETTES: Readonly<Record<DistrictClassId, readonly string[]>> = {
   P: ["#8f8d88", "#9a8274", "#7d848b", "#a39887", "#87766c", "#747d78", "#9e8e7a", "#6f7378"],
   M: ["#b86f52", "#d8c3a5", "#c98a63", "#cfd6c4", "#bfa588", "#a85d48", "#dfd3be", "#9eb39d"],
@@ -464,12 +479,14 @@ export function pickBuildingVisual(
   const classWalls = CLASS_WALL_PALETTES[districtClass];
   const brandSpec = brandId ? visuals.brands.find((b) => b.brandId === brandId) : undefined;
 
+  const singleModelWalls = [sectorHex.primaryHex, ...COMMERCIAL_WALLS];
   const wallHex =
     family === "SINGLE-MODEL"
-      ? sectorHex.primaryHex
+      ? singleModelWalls[paletteIndex % singleModelWalls.length]!
       : brandSpec?.primaryHex ?? classWalls[paletteIndex % classWalls.length]!;
   const accentHex = brandSpec?.secondaryHex ?? sectorHex.accentHex;
-  const roofHex = sectorHex.roofHex;
+  const roofs = SECTOR_ROOF_PALETTES[sectorId];
+  const roofHex = roofs[(h3 >>> 12) % roofs.length]!;
 
   return {
     buildingId,
