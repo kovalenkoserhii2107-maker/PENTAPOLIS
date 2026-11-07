@@ -18,7 +18,7 @@ describe("Sprint 4: developers buy materials, timed factory upgrades", () => {
   function boot(dbFile?: string): RunningPentapolisServer {
     const file = dbFile ?? join(mkdtempSync(join(tmpdir(), "pentapolis-build-")), "w.sqlite");
     if (!dbFile) dirs.push(join(file, ".."));
-    srv = createPentapolisServer({ port: 0, dbPath: file, enableRealtimeLoop: false });
+    srv = createPentapolisServer({ port: 0, dbPath: file, enableRealtimeLoop: false, enforceStageUnlocks: false });
     srv.world.executeCommand({ type: "claim_sector", sectorId: 1, cityName: "Т", mayorName: "М", currency: "UAH" });
     srv.world.engine.getRegion(1).treasuryCashAtCb = money(2_000_000_000);
     return srv;
@@ -81,7 +81,7 @@ describe("Sprint 4: developers buy materials, timed factory upgrades", () => {
     for (let h = 0; h < 12; h++) w.executeCommand({ type: "admin_time_skip", jump: "1h" });
     s.stop();
     srv = null;
-    const s2 = createPentapolisServer({ port: 0, dbPath: dbFile, enableRealtimeLoop: false });
+    const s2 = createPentapolisServer({ port: 0, dbPath: dbFile, enableRealtimeLoop: false, enforceStageUnlocks: false });
     srv = s2;
     b = s2.world.getSnapshot().buildings[0]!;
     expect(b.upgradeTargetLevel).toBe(2);

@@ -67,8 +67,16 @@ export const AdvisorQuestOverlay: React.FC<AdvisorQuestOverlayProps> = ({
   onActivateStepTool,
   onOpenMacroModal,
 }) => {
-  const [collapsed, setCollapsed] = useState(false);
+  // On phones the map comes first: start folded into a small pill
+  const [collapsed, setCollapsed] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 767px), (max-height: 520px)").matches
+  );
   const [activeAdvisorTab, setActiveAdvisorTab] = useState<"quests" | "advisors">("quests");
+
+  /** On a phone the card covers the map: fold it once the player is sent to act on the map. */
+  const foldOnPhone = () => {
+    if (window.matchMedia("(max-width: 767px), (max-height: 520px)").matches) setCollapsed(true);
+  };
 
   const sec = snapshot.sectors.find((s) => s.sectorId === activeSectorId) ?? snapshot.sectors[0]!;
   const quests = sec.quests ?? [];
@@ -134,10 +142,10 @@ export const AdvisorQuestOverlay: React.FC<AdvisorQuestOverlayProps> = ({
 
   if (collapsed) {
     return (
-      <div className="pointer-events-auto fixed left-3 top-14 z-20 flex items-center gap-1.5">
+      <div className="pointer-events-auto flex items-center gap-1.5">
         <button
           onClick={() => setCollapsed(false)}
-          className="touch-target flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/92 backdrop-blur-md border border-amber-500/50 hover:border-amber-400 text-xs text-slate-100 shadow-xl transition"
+          className="touch-target flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/90 backdrop-blur-md border border-amber-500/50 hover:border-amber-400 text-xs text-slate-100 shadow-xl transition"
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-400" />
           <span className="font-semibold">
@@ -160,7 +168,7 @@ export const AdvisorQuestOverlay: React.FC<AdvisorQuestOverlayProps> = ({
   }
 
   return (
-    <aside className="pointer-events-auto fixed left-3 top-14 z-20 w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-7.5rem)] overflow-y-auto rounded-xl bg-slate-950/92 backdrop-blur-md border border-slate-700/80 shadow-2xl text-xs text-slate-100">
+    <aside className="pointer-events-auto min-h-0 shrink overflow-y-auto rounded-xl bg-slate-950/90 backdrop-blur-md border border-slate-700/80 shadow-2xl text-xs text-slate-100">
       {/* Sticky Header */}
       <div className="sticky top-0 z-10 flex items-center justify-between gap-1.5 px-3 py-2 bg-slate-950/95 border-b border-slate-800">
         <div className="flex items-center gap-1.5">
@@ -251,7 +259,10 @@ export const AdvisorQuestOverlay: React.FC<AdvisorQuestOverlayProps> = ({
                   ) : (
                     <>
                       <button
-                        onClick={() => onActivateStepTool(currentStep.stepId)}
+                        onClick={() => {
+                          onActivateStepTool(currentStep.stepId);
+                          foldOnPhone();
+                        }}
                         className="touch-target flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/25 hover:bg-amber-500/35 border border-amber-400/70 text-amber-100 font-semibold transition"
                       >
                         {currentStep.stepId === 1 ? (
@@ -265,7 +276,10 @@ export const AdvisorQuestOverlay: React.FC<AdvisorQuestOverlayProps> = ({
                       </button>
                       {currentStep.stepId === 1 && gw && (
                         <button
-                          onClick={() => onFocusTile(gw.tileX, gw.tileY, 4.0)}
+                          onClick={() => {
+                            onFocusTile(gw.tileX, gw.tileY, 4.0);
+                            foldOnPhone();
+                          }}
                           className="touch-target px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 transition flex items-center gap-1"
                           title="Навести камеру на внешний шлюз сектора"
                         >

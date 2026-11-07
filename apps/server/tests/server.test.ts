@@ -26,7 +26,7 @@ describe("Authoritative Pentapolis Server & SQLite WAL Persistence (Sprint 3)", 
     activeServer = createPentapolisServer({
       port: 0,
       dbPath: dbFile,
-      enableRealtimeLoop: false,
+      enableRealtimeLoop: false, enforceStageUnlocks: false,
     });
 
     const healthRes = await fetch(`${activeServer.url}/api/health`);
@@ -92,7 +92,7 @@ describe("Authoritative Pentapolis Server & SQLite WAL Persistence (Sprint 3)", 
     activeServer = createPentapolisServer({
       port: 0,
       dbPath: dbFile,
-      enableRealtimeLoop: false,
+      enableRealtimeLoop: false, enforceStageUnlocks: false,
     });
 
     // Claim Sector 1 with Hryvnia (₴ UAH) -> $10,000,000 greenfield treasury
@@ -216,7 +216,7 @@ describe("Authoritative Pentapolis Server & SQLite WAL Persistence (Sprint 3)", 
     activeServer = createPentapolisServer({
       port: 0,
       dbPath: dbFile,
-      enableRealtimeLoop: false,
+      enableRealtimeLoop: false, enforceStageUnlocks: false,
     });
     const reloaded = activeServer.world.getSnapshot();
     expect(reloaded.sectors[0]!.occupied).toBe(true);
@@ -238,7 +238,7 @@ describe("Authoritative Pentapolis Server & SQLite WAL Persistence (Sprint 3)", 
       port: 0,
       dbPath: dbFile,
       staticDir: distDir,
-      enableRealtimeLoop: false,
+      enableRealtimeLoop: false, enforceStageUnlocks: false,
     });
 
     const w = activeServer.world;
@@ -315,7 +315,7 @@ describe("Authoritative Pentapolis Server & SQLite WAL Persistence (Sprint 3)", 
         sectorId: 1,
         catalogId: "ENG-01",
         tileX: gw.tileX - 60,
-        tileY: 220,
+        tileY: 232,
       }).ok
     ).toBe(true);
     expect(w.executeCommand({ type: "claim_quest_reward", sectorId: 1, stepId: 3 }).ok).toBe(true);
