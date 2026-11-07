@@ -23,7 +23,7 @@ describe("Sprint 6: city services, emergencies with dispatch, land value, car li
       port: 0,
       dbPath: join(dir, "w.sqlite"),
       worldId: "pentapolis-city-test-v1",
-      enableRealtimeLoop: false,
+      enableRealtimeLoop: false, enforceStageUnlocks: false,
     });
     const w = srv.world;
     w.executeCommand({ type: "claim_sector", sectorId: 1, cityName: "Т", mayorName: "М", currency: "UAH" });

@@ -36,6 +36,8 @@ export interface PentapolisServerOptions {
   readonly enableRealtimeLoop?: boolean;
   /** Replaces real Web Push delivery (tests). */
   readonly pushSender?: PushSender;
+  /** Catalog items wait for their development stage (default true; tests may build freely). */
+  readonly enforceStageUnlocks?: boolean;
 }
 
 export interface RunningPentapolisServer {
@@ -76,6 +78,7 @@ export function createPentapolisServer(
   const staticDir =
     options.staticDir ?? resolve(import.meta.dir, "..", "..", "client", "dist");
   const world = new WorldSimulation(dbPath, options.worldId);
+  world.enforceStageUnlocks = options.enforceStageUnlocks !== false;
   // Phone alerts (GDD §1.4): the simulation never waits for delivery
   const push = new PushService(world.db, options.pushSender);
   world.onMayorAlert = (sectorId, alert) => {

@@ -29,7 +29,7 @@ describe("Sprint 5: live traffic, road wear, bus licences, metro & agent dossier
   function boot(dbFile?: string): RunningPentapolisServer {
     const file = dbFile ?? join(mkdtempSync(join(tmpdir(), "pentapolis-traffic-")), "w.sqlite");
     if (!dbFile) tempDirs.push(join(file, ".."));
-    srv = createPentapolisServer({ port: 0, dbPath: file, enableRealtimeLoop: false });
+    srv = createPentapolisServer({ port: 0, dbPath: file, enableRealtimeLoop: false, enforceStageUnlocks: false });
     return srv;
   }
 

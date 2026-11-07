@@ -33,7 +33,7 @@ export const ConstructionMarketCard: React.FC<ConstructionMarketCardProps> = ({ 
   const fillPct = Math.round(stats.fillRatio * 100);
 
   return (
-    <div className="rounded-lg bg-slate-950/88 backdrop-blur-md border border-slate-800 p-2.5 text-xs shadow-xl">
+    <div className="rounded-lg bg-slate-950/90 backdrop-blur-md border border-slate-800 p-2.5 text-xs shadow-xl">
       <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between font-bold text-amber-300">
         <span className="flex items-center gap-1.5">
           <Construction className="w-3.5 h-3.5" /> Стройка девелоперов S{activeSectorId}

@@ -41,7 +41,12 @@ export interface SectorSummaryDto {
   readonly currency: CurrencyCode;
   readonly currencySymbol: string;
   readonly fxRatePerWcu: number;
+  /** Development stage S0..S5 reached by the city actually built on the map (GDD §6.1). */
   readonly stage: string;
+  /** Households living in the developers' finished blocks (drives the stage). */
+  readonly cityHouseholds?: number;
+  /** Next stage and the households it needs (absent at the last stage). */
+  readonly nextStage?: { readonly stage: string; readonly nameRu: string; readonly minHouseholds: number };
   readonly treasuryBalanceMinor: string;
   readonly gdpWcu: number;
   readonly annualInflation: number;
