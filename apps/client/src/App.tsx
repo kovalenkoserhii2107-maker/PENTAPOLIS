@@ -23,7 +23,8 @@ import {
 import type { HeatmapOverlayKind } from "./renderer/LotGenerator.ts";
 import { TopHudBar } from "./components/TopHudBar.tsx";
 import { RegionSelectModal } from "./components/RegionSelectModal.tsx";
-import { BuildToolbar } from "./components/BuildToolbar.tsx";
+import { BuildToolbar, SelectedBuildingCard } from "./components/BuildToolbar.tsx";
+import { ConstructionMarketCard } from "./components/ConstructionMarketCard.tsx";
 import { MacroDashboardModal } from "./components/MacroDashboardModal.tsx";
 import { CouncilChatDrawer } from "./components/CouncilChatDrawer.tsx";
 import { AdminGodModeTray } from "./components/AdminGodModeTray.tsx";
@@ -372,6 +373,13 @@ export const App: React.FC = () => {
     })();
   }, [pushState, pushToast]);
 
+  /** The right-hand panels share one column: opening one closes the others so nothing piles up off-screen. */
+  const toggleSidePanel = useCallback((panel: "transport" | "city" | "geo") => {
+    setShowTransport((v) => (panel === "transport" ? !v : false));
+    setShowCity((v) => (panel === "city" ? !v : false));
+    setShowGeo((v) => (panel === "geo" ? !v : false));
+  }, []);
+
   // Keep Three.js tool & selection synchronized
   useEffect(() => {
     sceneRef.current?.setTool(tool);
@@ -482,17 +490,6 @@ export const App: React.FC = () => {
         }
       }}
     >
-      {/* Portrait Orientation Prompt for Mobile Screens (GDD §1.3 & §8.4) */}
-      <div className="portrait-guard-overlay hidden fixed inset-0 z-[100] bg-slate-950 flex-col items-center justify-center p-6 text-center space-y-3">
-        <RotateCw className="w-12 h-12 text-amber-400 animate-spin" />
-        <h2 className="text-lg font-bold text-white">
-          Пожалуйста, поверните смартфон горизонтально для управления городом
-        </h2>
-        <p className="text-xs text-slate-400 max-w-xs">
-          PENTAPOLIS спроектирован строго для альбомной ориентации (Landscape PWA) для работы с картой полуострова и макроэкономическими таблицами.
-        </p>
-      </div>
-
       {/* Fullscreen Three.js 2:1 Orthographic Isometric Viewport */}
       <div ref={viewportRef} className="absolute inset-0" />
 
@@ -535,38 +532,48 @@ export const App: React.FC = () => {
             onTogglePush={togglePush}
           />
 
-          <AdvisorQuestOverlay
-            snapshot={snapshot}
-            activeSectorId={activeSectorId}
-            gateways={gateways}
-            onSendCommand={(cmd) => void sendCommand(cmd)}
-            onFocusTile={(x, y, zoom = 4.2) => sceneRef.current?.focusTile(x, y, zoom)}
-            onActivateStepTool={handleActivateQuestStepTool}
-            onOpenMacroModal={() => setShowMacroModal(true)}
-          />
+          {/* Left column: quests & advisors, developer construction, the selected building */}
+          <div className="pointer-events-none fixed left-3 top-14 bottom-24 z-20 w-80 max-w-[calc(100vw-1.5rem)] flex flex-col gap-2 compact:top-12 compact:bottom-20 compact:w-72">
+            <AdvisorQuestOverlay
+              snapshot={snapshot}
+              activeSectorId={activeSectorId}
+              gateways={gateways}
+              onSendCommand={(cmd) => void sendCommand(cmd)}
+              onFocusTile={(x, y, zoom = 4.2) => sceneRef.current?.focusTile(x, y, zoom)}
+              onActivateStepTool={handleActivateQuestStepTool}
+              onOpenMacroModal={() => setShowMacroModal(true)}
+            />
+            <div className="pointer-events-auto shrink-0 space-y-2">
+              <ConstructionMarketCard snapshot={snapshot} activeSectorId={activeSectorId} />
+              <SelectedBuildingCard
+                selectedBuilding={selectedBuilding}
+                buildingsCatalog={catalogs.buildings}
+                onBuyoutFactory={(buildingId) =>
+                  void sendCommand({ type: "buyout_factory", sectorId: activeSectorId, buildingId })
+                }
+                onUpgradeBuilding={(buildingId) =>
+                  void sendCommand({ type: "upgrade_building", sectorId: activeSectorId, buildingId })
+                }
+                onBulldozeBuilding={(buildingId) =>
+                  void sendCommand({ type: "demolish_building", sectorId: activeSectorId, buildingId })
+                }
+              />
+            </div>
+          </div>
 
           <BuildToolbar
             snapshot={snapshot}
             activeSectorId={activeSectorId}
             buildingsCatalog={catalogs.buildings}
+            stages={catalogs.stages}
             tool={tool}
-            selectedBuilding={selectedBuilding}
             onChangeTool={setTool}
-            onBuyoutFactory={(buildingId) =>
-              void sendCommand({ type: "buyout_factory", sectorId: activeSectorId, buildingId })
-            }
-            onUpgradeBuilding={(buildingId) =>
-              void sendCommand({ type: "upgrade_building", sectorId: activeSectorId, buildingId })
-            }
-            onBulldozeBuilding={(buildingId) =>
-              void sendCommand({ type: "demolish_building", sectorId: activeSectorId, buildingId })
-            }
             transportOpen={showTransport}
-            onToggleTransport={() => setShowTransport((v) => !v)}
+            onToggleTransport={() => toggleSidePanel("transport")}
             cityOpen={showCity}
-            onToggleCity={() => setShowCity((v) => !v)}
+            onToggleCity={() => toggleSidePanel("city")}
             geoOpen={showGeo}
-            onToggleGeo={() => setShowGeo((v) => !v)}
+            onToggleGeo={() => toggleSidePanel("geo")}
             questHighlight={questHighlight}
           />
         </div>
@@ -574,7 +581,7 @@ export const App: React.FC = () => {
 
       {/* Right Column: Vehicle -> Citizen Inspector & Transport Office (Sprint 5) */}
       {snapshot && (selectedVehicleId || showTransport || showCity || showGeo) && (
-        <div className="pointer-events-auto fixed right-3 top-14 z-30 w-80 max-h-[calc(100vh-8rem)] overflow-y-auto flex flex-col gap-2">
+        <div className="pointer-events-auto fixed right-3 top-14 z-30 w-80 max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-8rem)] overflow-y-auto flex flex-col gap-2 compact:top-12 compact:max-h-[calc(100dvh-7.75rem)]">
           {selectedVehicleId && (
             <AgentInspectorPanel
               vehicleId={selectedVehicleId}
@@ -664,7 +671,7 @@ export const App: React.FC = () => {
               ` — ${snapshot.emergencies[snapshot.emergencies.length - 1]!.statusRu}`}
           </div>
         )}
-        <div className="px-2.5 py-1 rounded bg-slate-950/85 border border-slate-800 text-slate-300 font-mono">
+        <div className="px-2.5 py-1 rounded bg-slate-950/85 border border-slate-800 text-slate-300 font-mono compact:hidden touch:hidden">
           {hoverTile ? (
             <>
               ({hoverTile.tileX}, {hoverTile.tileY}) ·{" "}

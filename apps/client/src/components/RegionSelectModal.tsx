@@ -87,7 +87,7 @@ export const RegionSelectModal: React.FC<RegionSelectModalProps> = ({
         </div>
 
         {/* Body: 5 Sector Cards + Claim Form */}
-        <div className="grid grid-cols-12 gap-4 p-4 overflow-y-auto">
+        <div className="grid grid-cols-12 gap-4 p-4 overflow-y-auto compact:gap-2 compact:p-2.5">
           {/* Left 7 cols: 5 Asymmetric Sectors */}
           <div className="col-span-12 lg:col-span-7 space-y-2">
             {sectorProfiles.map((prof) => {
@@ -129,7 +129,7 @@ export const RegionSelectModal: React.FC<RegionSelectModalProps> = ({
 
                   <p className="mt-1 text-xs text-sky-200">{prof.profileSummaryRu}</p>
 
-                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-slate-400 compact:hidden">
                     <span>Вход: {prof.gatewayLabelRu}</span>
                     <span className="flex items-center gap-1">
                       <Ship className="w-3 h-3 text-sky-400" /> Осадка порта до {prof.maxPortDraftMeters} м
@@ -233,7 +233,7 @@ export const RegionSelectModal: React.FC<RegionSelectModalProps> = ({
               </div>
             </div>
 
-            <div className="pt-3 mt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+            <div className="pt-3 mt-3 border-t border-slate-800 flex items-center justify-end gap-2 compact:hidden">
               <button
                 onClick={onClose}
                 className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300"
@@ -254,6 +254,26 @@ export const RegionSelectModal: React.FC<RegionSelectModalProps> = ({
             </div>
           </div>
         </div>
+        {/* Phones: the claim button stays in reach under the scrolling list */}
+        <div className="hidden compact:flex items-center justify-end gap-2 px-3 py-2 bg-slate-950 border-t border-slate-800">
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300"
+              >
+                Закрыть
+              </button>
+              <button
+                onClick={() => {
+                  onClaimSector(selectedSlot, cityName, mayorName, currency);
+                  onSelectActiveSector(selectedSlot);
+                  onClose();
+                }}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white shadow-lg transition"
+              >
+                <Check className="w-4 h-4" />
+                <span>Возглавить Сектор S{selectedSlot}</span>
+              </button>
+            </div>
       </div>
     </div>
   );

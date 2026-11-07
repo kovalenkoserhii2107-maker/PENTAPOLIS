@@ -83,6 +83,7 @@ import {
   type CurrencyCode,
   type MasterCatalogs,
   type Money,
+  type NetworkKind,
   type NetworkSegmentDto,
   type PeninsulaMapData,
   type RoadServiceLevel,
@@ -192,6 +193,67 @@ function currencySymbol(code: CurrencyCode): string {
   }
 }
 
+const STAGE_RANK: Readonly<Record<string, number>> = { S0: 0, S1: 1, S2: 2, S3: 3, S4: 4, S5: 5 };
+const STAGE_NAMES_RU: Readonly<Record<string, string>> = {
+  S0: "Пустошь",
+  S1: "Посёлок",
+  S2: "Городок",
+  S3: "Город",
+  S4: "Мегаполис",
+  S5: "Эндшпиль",
+};
+/** Catalog entries whose unlock stage gates each network kind. */
+const NETWORK_CATALOG_IDS: Readonly<Record<NetworkKind, string>> = {
+  street_2lane: "INF-01",
+  avenue_4lane: "INF-02",
+  express_6lane: "INF-03",
+  heavy_bypass: "INF-04",
+  rail: "INF-05",
+  pipeline: "INF-06",
+  hv_power: "INF-09",
+  metro_tunnel: "TRN-08",
+};
+
+/** Half-width (tiles) of surface networks that occupy the ground; others pass over or under it. */
+const SURFACE_NETWORK_HALF_WIDTH: Partial<Record<NetworkKind, number>> = {
+  street_2lane: 0.7,
+  avenue_4lane: 1.1,
+  express_6lane: 1.5,
+  heavy_bypass: 1.4,
+  rail: 0.65,
+};
+
+const NETWORK_NAMES_RU: Readonly<Record<NetworkKind, string>> = {
+  street_2lane: "улица (2 полосы)",
+  avenue_4lane: "проспект (4 полосы)",
+  express_6lane: "магистраль (6 полос)",
+  heavy_bypass: "грузовой обход",
+  rail: "железная дорога",
+  pipeline: "трубопровод",
+  hv_power: "ЛЭП",
+  metro_tunnel: "тоннель метро",
+};
+
+/** True when a segment of the given half-width passes over any tile of the rectangle. */
+function segmentCrossesRect(
+  seg: { readonly fromX: number; readonly fromY: number; readonly toX: number; readonly toY: number },
+  x: number,
+  y: number,
+  w: number,
+  d: number,
+  halfWidth: number
+): boolean {
+  const len = Math.hypot(seg.toX - seg.fromX, seg.toY - seg.fromY);
+  const steps = Math.max(1, Math.ceil(len * 2));
+  const pad = halfWidth - 0.2;
+  for (let i = 0; i <= steps; i++) {
+    const px = seg.fromX + ((seg.toX - seg.fromX) * i) / steps;
+    const py = seg.fromY + ((seg.toY - seg.fromY) * i) / steps;
+    if (px > x - pad && px < x + w + pad && py > y - pad && py < y + d + pad) return true;
+  }
+  return false;
+}
+
 export class WorldSimulation {
   public readonly worldId: string;
   public readonly catalogs: MasterCatalogs;
@@ -245,6 +307,9 @@ export class WorldSimulation {
   private readonly claimedQuests = new Map<SectorId, Set<StarterQuestStepId>>(
     SECTOR_IDS.map((sectorId) => [sectorId, new Set<StarterQuestStepId>()])
   );
+
+  /** Catalog items wait for the stage that unlocks them (tests switch this off to build freely). */
+  public enforceStageUnlocks = true;
 
   constructor(dbPath = ":memory:", fixedWorldId?: string) {
     this.catalogs = getMasterCatalogs();
@@ -1151,13 +1216,12 @@ export class WorldSimulation {
       .map((b) => megaprojectStatus(b, this.catalogs, stakes, this.megaResources.get(b.id)));
   }
 
-  /** Catalog unlock rule for MEG-*: 3 of 5 regions at the Metropolis stage (S5). */
+  /** Catalog unlock rule for MEG-* (stage S5 "Endgame"): 3 of 5 cities have grown into metropolises (S4). */
   private megaprojectsLockedReason(): string | null {
-    const metropolises = SECTOR_IDS.filter(
-      (s) => this.computeSectorStage(Math.round(this.engine.getRegion(s).classes.reduce((t, c) => t + c.households, 0))) === "S5"
-    ).length;
+    if (!this.enforceStageUnlocks) return null;
+    const metropolises = SECTOR_IDS.filter((s) => STAGE_RANK[this.sectorStage(s)]! >= STAGE_RANK.S4!).length;
     return metropolises < 3
-      ? `Мегапроекты открываются, когда 3 из 5 регионов достигнут этапа S5 (сейчас ${metropolises})`
+      ? `Мегапроекты открываются, когда 3 из 5 городов станут мегаполисами (стадия S4, 40 000 семей). Сейчас: ${metropolises}`
       : null;
   }
 
@@ -2517,6 +2581,63 @@ export class WorldSimulation {
     return { ok: true, message: `Сектор ${sectorId} сброшен до стартового состояния ($10M).` };
   }
 
+  /**
+   * Why a footprint cannot be used, or null when it is free: another building, a zoned block, or a
+   * road / railway running across it (pipelines, power lines and metro pass over or under freely).
+   */
+  private footprintConflict(
+    x: number,
+    y: number,
+    w: number,
+    d: number,
+    opts: { readonly ignoreRoads?: boolean; readonly ignoreZones?: boolean } = {}
+  ): string | null {
+    const overlaps = (ox: number, oy: number, ow: number, od: number) =>
+      x < ox + ow && x + w > ox && y < oy + od && y + d > oy;
+    for (const b of this.buildings.values()) {
+      if (overlaps(b.tileX, b.tileY, b.width, b.depth)) {
+        const name = this.catalogs.buildingsById.get(b.catalogId)?.nameRu ?? b.catalogId;
+        return `Площадка занята: здесь уже стоит «${name}»`;
+      }
+    }
+    for (const z of this.zones.values()) {
+      if (!opts.ignoreZones && overlaps(z.x, z.y, z.width, z.depth)) {
+        return `Здесь уже размечена зона ${z.zoneKind} — снесите её или выберите другое место`;
+      }
+    }
+    if (!opts.ignoreRoads) {
+      for (const seg of this.segments.values()) {
+        const half = SURFACE_NETWORK_HALF_WIDTH[seg.kind];
+        if (half === undefined) continue;
+        if (segmentCrossesRect(seg, x, y, w, d, half)) {
+          return `Участок пересекает ${NETWORK_NAMES_RU[seg.kind]}: разметьте его рядом с дорогой, а не на ней`;
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Why a new road / railway cannot go here: it would run through a building or a zoned block. */
+  private segmentConflict(cmd: Extract<ClientCommand, { type: "build_segment" }>): string | null {
+    const half = SURFACE_NETWORK_HALF_WIDTH[cmd.kind];
+    if (half === undefined || cmd.isFlyover) return null;
+    const seg = { fromX: cmd.fromX, fromY: cmd.fromY, toX: cmd.toX, toY: cmd.toY };
+    for (const b of this.buildings.values()) {
+      // Bus stops and border posts sit on the street by design
+      if (b.catalogId === "TRN-01" || b.catalogId === "LOG-07") continue;
+      if (segmentCrossesRect(seg, b.tileX, b.tileY, b.width, b.depth, half)) {
+        const name = this.catalogs.buildingsById.get(b.catalogId)?.nameRu ?? b.catalogId;
+        return `${NETWORK_NAMES_RU[cmd.kind]} упирается в «${name}» — проложите трассу в обход`;
+      }
+    }
+    for (const z of this.zones.values()) {
+      if (segmentCrossesRect(seg, z.x, z.y, z.width, z.depth, half)) {
+        return `${NETWORK_NAMES_RU[cmd.kind]} проходит через зону ${z.zoneKind} — проложите трассу по её краю`;
+      }
+    }
+    return null;
+  }
+
   private handleBuildSegment(
     cmd: Extract<ClientCommand, { type: "build_segment" }>
   ): CommandOutcome {
@@ -2538,6 +2659,13 @@ export class WorldSimulation {
     if (!quote.ok) {
       return { ok: false, message: quote.reason };
     }
+    const netEntry = this.catalogs.buildingsById.get(NETWORK_CATALOG_IDS[cmd.kind]);
+    if (netEntry) {
+      const locked = this.stageLockReason(cmd.sectorId, netEntry.unlockStage, NETWORK_NAMES_RU[cmd.kind]);
+      if (locked) return { ok: false, message: locked };
+    }
+    const blocked = this.segmentConflict(cmd);
+    if (blocked) return { ok: false, message: blocked };
 
     const cost = quote.preview.buildCostLocal;
     if (reg.treasuryCashAtCb < cost) {
@@ -2570,7 +2698,7 @@ export class WorldSimulation {
     const bridgeTag = seg.hasBridge ? " (вкл. мост 3x через реку)" : seg.isFlyover ? " (эстакада Z=+1)" : "";
     return {
       ok: true,
-      message: `Построена сеть ${cmd.kind} (${Math.round(quote.preview.lengthMeters)} м)${bridgeTag} за ${fmtSym(cost, sym)}`,
+      message: `Построено: ${NETWORK_NAMES_RU[cmd.kind]} (${Math.round(quote.preview.lengthMeters)} м)${bridgeTag} за ${fmtSym(cost, sym)}`,
     };
   }
 
@@ -2598,6 +2726,14 @@ export class WorldSimulation {
         }
       }
     }
+
+    const zoneEntry = this.catalogs.buildingsById.get(cmd.zoneKind);
+    if (zoneEntry) {
+      const locked = this.stageLockReason(cmd.sectorId, zoneEntry.unlockStage, zoneEntry.nameRu);
+      if (locked) return { ok: false, message: locked };
+    }
+    const conflict = this.footprintConflict(cmd.x, cmd.y, w, d);
+    if (conflict) return { ok: false, message: conflict };
 
     const surveyCost = mulRate(money(w * d * 250), reg.fxRatePerWcu);
     if (reg.treasuryCashAtCb < surveyCost) {
@@ -2637,6 +2773,11 @@ export class WorldSimulation {
     const entry = this.catalogs.buildingsById.get(cmd.catalogId);
     if (!entry) {
       return { ok: false, message: `Здание ${cmd.catalogId} не найдено в каталоге` };
+    }
+
+    if (entry.prefix !== "MEG") {
+      const locked = this.stageLockReason(cmd.sectorId, entry.unlockStage, entry.nameRu);
+      if (locked) return { ok: false, message: locked };
     }
 
     const reg = this.engine.getRegion(cmd.sectorId);
@@ -2701,16 +2842,14 @@ export class WorldSimulation {
       }
     }
 
-    // Check overlap with existing placed buildings
-    for (const existing of this.buildings.values()) {
-      const overlapX =
-        cmd.tileX < existing.tileX + existing.width && cmd.tileX + w > existing.tileX;
-      const overlapY =
-        cmd.tileY < existing.tileY + existing.depth && cmd.tileY + d > existing.tileY;
-      if (overlapX && overlapY) {
-        return { ok: false, message: "Площадка пересекается с уже построенным объектом" };
-      }
-    }
+    // The site must be free of other buildings, zoned blocks and roads (stops and posts go on the street)
+    const onStreetByDesign = entry.id === "TRN-01" || entry.id === "TRN-09" || entry.id === "LOG-07" || entry.prefix === "INF";
+    const conflict = this.footprintConflict(cmd.tileX, cmd.tileY, w, d, {
+      ignoreRoads: onStreetByDesign || isMegaproject,
+      // A bus stop is a pole on the pavement: it may touch the edge of the block it serves
+      ignoreZones: entry.id === "TRN-01",
+    });
+    if (conflict) return { ok: false, message: conflict };
 
     // Transit boarding points must sit on their network (GDD §5.4)
     if (entry.id === "TRN-01" || entry.id === "TRN-09") {
@@ -3454,6 +3593,33 @@ export class WorldSimulation {
     return stage;
   }
 
+  private nextStageInfo(sectorId: SectorId): SectorSummaryDto["nextStage"] {
+    const rank = STAGE_RANK[this.sectorStage(sectorId)]!;
+    const next = this.catalogs.stages.find((st) => STAGE_RANK[st.stage]! === rank + 1);
+    return next ? { stage: next.stage, nameRu: STAGE_NAMES_RU[next.stage] ?? next.name, minHouseholds: next.minHouseholds } : undefined;
+  }
+
+  /** Households living in the sector's finished blocks (the macro economy models a mature country). */
+  private cityHouseholds(sectorId: SectorId): number {
+    const c = this.ensureCity().sectors.find((s) => s.sectorId === sectorId);
+    return Math.round((c?.residents ?? 0) / 2.2);
+  }
+
+  /** Development stage of the city actually built on the map. */
+  private sectorStage(sectorId: SectorId): string {
+    return this.computeSectorStage(this.cityHouseholds(sectorId));
+  }
+
+  /** Why the sector cannot build something of `unlockStage` yet, or null. */
+  private stageLockReason(sectorId: SectorId, unlockStage: string, nameRu: string): string | null {
+    if (!this.enforceStageUnlocks) return null;
+    const current = this.sectorStage(sectorId);
+    if (STAGE_RANK[current]! >= STAGE_RANK[unlockStage]!) return null;
+    const st = this.catalogs.stages.find((x) => x.stage === unlockStage);
+    const hh = this.cityHouseholds(sectorId);
+    return `«${nameRu}» откроется на стадии ${unlockStage}${st ? ` (${STAGE_NAMES_RU[unlockStage] ?? st.name}): нужно ${st.minHouseholds.toLocaleString("ru-RU")} семей в городе, сейчас ${hh.toLocaleString("ru-RU")}` : ""}`;
+  }
+
   private computeSectorPower(sectorId: SectorId): { supplyMw: number; demandMw: number } {
     let supplyMw = 35; // Starter gateway substation capacity
     let demandMw = 8;
@@ -3581,7 +3747,9 @@ export class WorldSimulation {
         currency: reg.currency,
         currencySymbol: sym,
         fxRatePerWcu: Number(reg.fxRatePerWcu.toFixed(4)),
-        stage: this.computeSectorStage(households),
+        stage: this.sectorStage(sectorId),
+        cityHouseholds: this.cityHouseholds(sectorId),
+        nextStage: this.nextStageInfo(sectorId),
         treasuryBalanceMinor: reg.treasuryCashAtCb.toString(),
         gdpWcu: Math.round(rep?.gdpWcu ?? 0),
         annualInflation: Number(lastAnnInflation.toFixed(4)),

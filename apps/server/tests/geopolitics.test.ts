@@ -23,7 +23,7 @@ describe("Sprint 7: border posts, cross-border trade, megaprojects, exchange, AI
   function boot(): RunningPentapolisServer {
     const dir = mkdtempSync(join(tmpdir(), "pentapolis-geo-"));
     dirs.push(dir);
-    srv = createPentapolisServer({ port: 0, dbPath: join(dir, "w.sqlite"), enableRealtimeLoop: false });
+    srv = createPentapolisServer({ port: 0, dbPath: join(dir, "w.sqlite"), enableRealtimeLoop: false, enforceStageUnlocks: false });
     const w = srv.world;
     w.executeCommand({ type: "claim_sector", sectorId: 1, cityName: "Запад", mayorName: "А", currency: "UAH" });
     w.executeCommand({ type: "claim_sector", sectorId: 2, cityName: "Восток", mayorName: "Б", currency: "PLN" });
@@ -177,7 +177,7 @@ describe("Sprint 7: border posts, cross-border trade, megaprojects, exchange, AI
       { type: "build_segment", sectorId: 1, kind: "pipeline", fromX: 415, fromY: 206, toX: 488, toY: 206 },
       { type: "build_segment", sectorId: 2, kind: "pipeline", fromX: 491, fromY: 206, toX: 545, toY: 206 },
       { type: "place_building", sectorId: 1, catalogId: "EXT-07", tileX: 415, tileY: 198 },
-      { type: "place_building", sectorId: 2, catalogId: "ENG-02", tileX: 530, tileY: 198 },
+      { type: "place_building", sectorId: 2, catalogId: "ENG-02", tileX: 530, tileY: 194 },
     ] as const;
     for (const c of cmds) {
       const out = w.executeCommand(c);

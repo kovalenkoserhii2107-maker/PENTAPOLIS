@@ -28,7 +28,7 @@ describe("Sprint 8: Web Push to the mayor's phone", () => {
     srv = createPentapolisServer({
       port: 0,
       dbPath: join(dir, "w.sqlite"),
-      enableRealtimeLoop: false,
+      enableRealtimeLoop: false, enforceStageUnlocks: false,
       pushSender: async (s, payload) => {
         if (gone.has(s.endpoint)) throw Object.assign(new Error("gone"), { statusCode: 410 });
         sent.push({ endpoint: s.endpoint, payload: JSON.parse(payload) });
